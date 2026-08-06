@@ -20,7 +20,7 @@ animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^1.0.0
+  woven_ring_chart: ^1.0.0-dev.1
 ```
 
 ```dart
