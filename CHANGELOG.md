@@ -3,6 +3,18 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.4] - 2026-08-06
+
+### Fixed
+
+- The README's images are pinned to the commit that contains them instead of
+  to the branch. pub.dev proxies external images and caches them under a key
+  that includes the URL and a date bucket, so a branch URL kept serving the
+  previous version of a picture after the file behind it changed. Pinning also
+  means a published version's README shows that version's pictures rather than
+  whatever is on the branch later. The links to the test matrix and the licence
+  still track the branch, so they stay current.
+
 ## [1.0.0-dev.3] - 2026-08-06
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 A doughnut chart whose segments lap over one another like shingles.
 
-![A four segment woven ring drawing itself, then reshaping as its data changes](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/main/doc/woven_ring_chart.gif)
+![A four segment woven ring drawing itself, then reshaping as its data changes](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/doc/woven_ring_chart.gif)
 
 Most donut charts cut between segments with a straight radial line. This one
 does not have a straight line anywhere. Each segment is a constant-width bar
@@ -18,7 +18,7 @@ animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^1.0.0-dev.3
+  woven_ring_chart: ^1.0.0-dev.4
 ```
 
 ```dart
@@ -48,7 +48,7 @@ The chart is square. It takes the smaller of whatever constraints it is given
 and centres itself in the box, so it is safe inside a `Row`, a `Card`, or an
 unbounded `SingleChildScrollView`.
 
-![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/main/screenshots/woven_ring_chart.png)
+![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/screenshots/woven_ring_chart.png)
 
 ## Shape
 
