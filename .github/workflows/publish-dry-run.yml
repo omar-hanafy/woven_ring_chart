@@ -1,0 +1,32 @@
+name: pub-dry-run
+
+# The lane rules are: main carries stable versions, dev carries prereleases.
+# Nothing stable has been released yet, so main still carries 1.0.0-dev.1 and a
+# push-triggered lane check there would fail on a state that is simply the
+# bootstrap. Push events are scoped to dev until the first stable release; add
+# main back to this list in the promotion PR. Pull requests are unscoped, so the
+# promotion PR into main is still held to the stable rule.
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: "."
+
+jobs:
+  dry-run:
+    name: dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: dart pub publish --dry-run

@@ -1,0 +1,82 @@
+name: CI
+
+# The lane rules are: main carries stable versions, dev carries prereleases.
+# Nothing stable has been released yet, so main still carries 1.0.0-dev.1 and a
+# push-triggered lane check there would fail on a state that is simply the
+# bootstrap. Push events are scoped to dev until the first stable release; add
+# main back to this list in the promotion PR. Pull requests are unscoped, so the
+# promotion PR into main is still held to the stable rule.
+on:
+  push:
+    branches:
+      - dev
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: "."
+
+jobs:
+  test-stable:
+    name: Test on stable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Validate release lane
+        env:
+          TARGET_LANE: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^version:/ {print $2; exit}' pubspec.yaml | tr -d "\"'")
+          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$'
+          prerelease_pattern='^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+(\+[0-9A-Za-z.-]+)?$'
+          if [[ "$TARGET_LANE" == 'main' && ! "$version" =~ $stable_pattern ]]; then
+            echo "main requires a stable semantic version, got $version."
+            exit 1
+          fi
+          if [[ "$TARGET_LANE" == 'dev' && ! "$version" =~ $prerelease_pattern ]]; then
+            echo "dev requires a prerelease semantic version, got $version."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+
+  test-beta:
+    name: Test on beta
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: beta
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  pana:
+    name: Pana
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: dart pub global activate pana 0.23.14
+      - run: pana --exit-code-threshold 0 .
