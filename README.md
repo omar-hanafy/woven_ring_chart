@@ -18,7 +18,7 @@ animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^1.0.0-dev.4
+  woven_ring_chart: ^1.0.0-dev.5
 ```
 
 ```dart
@@ -65,8 +65,9 @@ const WovenRingStyle(
 ```
 
 `overlapFraction` is measured in band widths and only moves the joint. It never
-changes the cap shape, which stays a half circle of radius `band / 2`. Counter-
-clockwise is a mirror image rather than a rotation, so the heads flip too.
+changes the cap shape, which stays a half circle of radius `band / 2`.
+Counter-clockwise is a mirror image rather than a rotation, so the heads flip
+too.
 
 ## Fills and borders
 
