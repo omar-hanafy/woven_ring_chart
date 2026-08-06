@@ -21,7 +21,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.TAG_PUSH_PAT }}
+          # Falls back so the job can run and report; the guard below stops
+          # it before it can tag with an identity that cannot publish.
+          token: ${{ secrets.TAG_PUSH_PAT || github.token }}
 
       - name: Compare package versions
         id: version
@@ -75,6 +77,25 @@ jobs:
             echo "value=$new_version"
             echo "tag=woven_ring_chart-v$new_version"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Require a tag-push identity
+        if: steps.version.outputs.changed == 'true'
+        env:
+          TAG_PUSH_PAT: ${{ secrets.TAG_PUSH_PAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAG_PUSH_PAT:-}" ]]; then
+            echo 'TAG_PUSH_PAT is not set.'
+            echo
+            echo 'A tag pushed with GITHUB_TOKEN does not start another workflow, so'
+            echo 'publish.yml would never run and the version would be spent on a tag'
+            echo 'that never published. Stopping before the tag is created.'
+            echo
+            echo 'Add a fine-grained PAT limited to this repository with Contents'
+            echo 'read and write, stored as the TAG_PUSH_PAT secret.'
+            exit 1
+          fi
 
       - name: Verify tag is new
         if: steps.version.outputs.changed == 'true'
