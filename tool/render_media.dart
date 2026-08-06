@@ -61,6 +61,12 @@ void main() {
       required double width,
       required double height,
     }) {
+      // The surface has to be inside the boundary. Captured from outside it the
+      // frames come out transparent, and a GIF has one bit of transparency, so
+      // every antialiased edge is then cut to a hard stair-step. It also makes
+      // the picture honest: a border with no colour of its own paints in the
+      // surface colour, so a ring is only drawn correctly against the surface
+      // it was given.
       return Directionality(
         textDirection: TextDirection.ltr,
         child: ColoredBox(
@@ -68,7 +74,10 @@ void main() {
           child: Center(
             child: RepaintBoundary(
               key: shot,
-              child: SizedBox(width: width, height: height, child: child),
+              child: ColoredBox(
+                color: surface,
+                child: SizedBox(width: width, height: height, child: child),
+              ),
             ),
           ),
         ),

@@ -3,6 +3,18 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-dev.3] - 2026-08-06
+
+### Fixed
+
+- The README animation and the screenshot are rendered against the ring's
+  surface colour again. The capture boundary sat inside the coloured
+  background rather than around it, so both came out transparent. A GIF has
+  one bit of transparency, which cut every antialiased edge into a hard
+  stair-step; the animation is now smooth, and smaller for it. It also makes
+  the pictures honest, since a border with no colour of its own paints in the
+  surface colour and only reads correctly against that surface.
+
 ## [1.0.0-dev.2] - 2026-08-06
 
 ### Fixed
