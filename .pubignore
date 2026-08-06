@@ -1,0 +1,23 @@
+# NOTE: this file REPLACES the root .gitignore for `dart pub publish`, so it
+# has to re-list the publish-relevant ignores as well as the extra entries.
+
+*.class
+*.iml
+*.ipr
+*.iws
+*.log
+*.swp
+.DS_Store
+.dart_tool/
+.flutter-plugins-dependencies
+.idea/
+.vscode/
+build/
+coverage/
+pubspec.lock
+**/doc/api/
+
+# Regenerated locally, and nobody installing the package needs them.
+example/macos/
+example/linux/
+example/windows/

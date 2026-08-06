@@ -1,0 +1,40 @@
+# Publishable package: conservative defaults plus the hygiene rules that
+# decide whether an archive is safe to hand to strangers.
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    avoid_relative_lib_imports: true
+    depend_on_referenced_packages: true
+    implementation_imports: true
+    secure_pubspec_urls: true
+
+    library_private_types_in_public_api: true
+    public_member_api_docs: true
+
+    prefer_single_quotes: true
+    prefer_const_constructors: true
+    sort_pub_dependencies: true
+
+    lines_longer_than_80_chars: false
+    constant_identifier_names: false
+
+analyzer:
+  exclude:
+    - "build/**"
+    - ".dart_tool/**"
+
+  errors:
+    # Publish safety: these fail the build.
+    avoid_relative_lib_imports: error
+    depend_on_referenced_packages: error
+    implementation_imports: error
+    secure_pubspec_urls: error
+    public_member_api_docs: error
+    deprecated_member_use_from_same_package: error
+
+    # Helpful, non-blocking.
+    library_private_types_in_public_api: warning
+    directives_ordering: warning
+    comment_references: warning
+    unawaited_futures: warning
