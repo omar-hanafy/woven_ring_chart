@@ -2,9 +2,7 @@
 
 A doughnut chart whose segments lap over one another like shingles.
 
-<p align="center">
-  <img src="doc/woven_ring_chart.gif" alt="A four segment woven ring drawing itself, then reshaping as its data changes" width="320">
-</p>
+![A four segment woven ring drawing itself, then reshaping as its data changes](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/main/doc/woven_ring_chart.gif)
 
 Most donut charts cut between segments with a straight radial line. This one
 does not have a straight line anywhere. Each segment is a constant-width bar
@@ -20,7 +18,7 @@ animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^1.0.0-dev.1
+  woven_ring_chart: ^1.0.0-dev.2
 ```
 
 ```dart
@@ -50,7 +48,7 @@ The chart is square. It takes the smaller of whatever constraints it is given
 and centres itself in the box, so it is safe inside a `Row`, a `Card`, or an
 unbounded `SingleChildScrollView`.
 
-![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](screenshots/woven_ring_chart.png)
+![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/main/screenshots/woven_ring_chart.png)
 
 ## Shape
 
@@ -195,7 +193,7 @@ device pixels per logical pixel and scan every one of them to prove nothing
 paints outside the silhouette, with a quarter of a logical pixel of margin for
 antialiasing and nothing more.
 
-[doc/TEST_MATRIX.md](doc/TEST_MATRIX.md) lists what each section covers.
+[doc/TEST_MATRIX.md](https://github.com/omar-hanafy/woven_ring_chart/blob/main/doc/TEST_MATRIX.md) lists what each section covers.
 
 ```sh
 dart analyze
@@ -204,4 +202,4 @@ flutter test
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/omar-hanafy/woven_ring_chart/blob/main/LICENSE).
