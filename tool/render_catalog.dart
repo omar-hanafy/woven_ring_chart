@@ -16,7 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 const String outDir = 'build/catalog_png';
-const Color surface = Color(0xFFFBFAF7);
+const Color surfaceColor = Color(0xFFFBFAF7);
 const double dim = 240;
 
 enum Scenario { quartet, extended, tinyValue, singleValue }
@@ -64,7 +64,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpWidget(
         Container(
-          color: surface,
+          color: surfaceColor,
           child: Directionality(
             textDirection: TextDirection.ltr,
             child: Center(
@@ -102,18 +102,21 @@ void main() {
             await shot(
               'S_${scenario.name}__${fill.name}__${border.name}__'
               '${cw ? 'cw' : 'ccw'}',
-              WovenRing(
-                snakes: <WovenSnake>[
+              WovenRingChart(
+                segments: <WovenSegment>[
                   for (var i = 0; i < values.length; i++)
-                    WovenSnake(
+                    WovenSegment(
                       value: values[i],
                       fill: fillFor(colors[i % colors.length], fill, i),
                       border: borderFor(border, i),
                     ),
                 ],
-                style: WovenRingStyle(clockwise: cw, surface: surface),
-                intro: WovenRingIntro.none,
-                highlighted: border == BorderMode.selected ? 2 : null,
+                style: WovenRingStyle(
+                  clockwise: cw,
+                  surfaceColor: surfaceColor,
+                ),
+                animation: WovenRingAnimation.none,
+                highlightedIndex: border == BorderMode.selected ? 2 : null,
               ),
             );
           }
@@ -122,8 +125,8 @@ void main() {
     }
 
     // ---- short segments, where whole overlap cycles form -------------------
-    // Two and three snakes are the counts at which a covering run can close the
-    // whole cycle, and a snake past about 88 percent laps its own tail.
+    // Two and three segments are the counts at which a covering run can close the
+    // whole cycle, and a segment past about 88 percent laps its own tail.
     for (final List<double> values in <List<double>>[
       <double>[80, 10, 10],
       <double>[10, 80, 10],
@@ -139,43 +142,43 @@ void main() {
         await shot(
           'W_${values.map((double v) => v.round()).join('_')}__'
           '${cw ? 'cw' : 'ccw'}',
-          WovenRing(
-            snakes: <WovenSnake>[
+          WovenRingChart(
+            segments: <WovenSegment>[
               for (var i = 0; i < values.length; i++)
-                WovenSnake(
+                WovenSegment(
                   value: values[i],
                   fill: WovenFill.solid(WovenPalette.quartet[i % 4]),
                 ),
             ],
-            style: WovenRingStyle(clockwise: cw, surface: surface),
-            intro: WovenRingIntro.none,
+            style: WovenRingStyle(clockwise: cw, surfaceColor: surfaceColor),
+            animation: WovenRingAnimation.none,
           ),
         );
       }
     }
 
     // ---- geometry sliders at their endpoints ------------------------------
-    for (final double band in <double>[0.15, 0.20, 0.25]) {
+    for (final double thickness in <double>[0.15, 0.20, 0.25]) {
       for (final double overlap in <double>[0.30, 0.50, 0.90]) {
         for (final double deg in <double>[-180, -90, 0, 45, 180]) {
           await shot(
-            'G_band${(band * 100).round()}__ov${(overlap * 100).round()}__'
+            'G_band${(thickness * 100).round()}__ov${(overlap * 100).round()}__'
             'a${deg.round()}',
-            WovenRing(
-              snakes: <WovenSnake>[
+            WovenRingChart(
+              segments: <WovenSegment>[
                 for (var i = 0; i < 4; i++)
-                  WovenSnake(
+                  WovenSegment(
                     value: <double>[25, 25, 25, 25][i],
                     fill: WovenFill.solid(WovenPalette.quartet[i]),
                   ),
               ],
               style: WovenRingStyle(
-                bandFraction: band,
+                thicknessFraction: thickness,
                 overlapFraction: overlap,
                 startAngle: deg * math.pi / 180,
-                surface: surface,
+                surfaceColor: surfaceColor,
               ),
-              intro: WovenRingIntro.none,
+              animation: WovenRingAnimation.none,
             ),
           );
         }
@@ -190,10 +193,10 @@ void main() {
             await shot(
               'X_${axis.name}__${dir.name}__${cw ? 'cw' : 'ccw'}__n$count'
               '',
-              WovenRing(
-                snakes: <WovenSnake>[
+              WovenRingChart(
+                segments: <WovenSegment>[
                   for (var i = 0; i < count; i++)
-                    WovenSnake(
+                    WovenSegment(
                       value: 1,
                       fill: WovenFill.shaded(
                         WovenPalette.extended[i % 6],
@@ -205,9 +208,9 @@ void main() {
                   gradientAxis: axis,
                   gradientDirection: dir,
                   clockwise: cw,
-                  surface: surface,
+                  surfaceColor: surfaceColor,
                 ),
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
               ),
             );
           }
@@ -216,70 +219,80 @@ void main() {
     }
 
     // ---- states ------------------------------------------------------------
-    await shot('Z_empty', const WovenRing.empty(style: WovenRingStyle()));
-    await shot('Z_loading', const WovenRing.loading(), settleMs: 400);
-    for (final WovenSingleSnakeStyle single in WovenSingleSnakeStyle.values) {
+    await shot('Z_empty', const WovenRingChart.empty(style: WovenRingStyle()));
+    await shot('Z_loading', const WovenRingChart.loading(), settleMs: 400);
+    for (final WovenSingleSegmentStyle single
+        in WovenSingleSegmentStyle.values) {
       for (final FillMode fill in FillMode.values) {
         await shot(
           'Z_single_${single.name}__${fill.name}',
-          WovenRing(
-            snakes: <WovenSnake>[
-              WovenSnake(
+          WovenRingChart(
+            segments: <WovenSegment>[
+              WovenSegment(
                 value: 100,
                 fill: fillFor(WovenPalette.purple, fill, 0),
               ),
             ],
-            style: WovenRingStyle(singleSnakeStyle: single, surface: surface),
-            intro: WovenRingIntro.none,
+            style: WovenRingStyle(
+              singleSegmentStyle: single,
+              surfaceColor: surfaceColor,
+            ),
+            animation: WovenRingAnimation.none,
           ),
         );
       }
     }
-    for (final WovenMinimumPolicy policy in WovenMinimumPolicy.values) {
+    for (final WovenSmallValuePolicy policy in WovenSmallValuePolicy.values) {
       await shot(
         'Z_tiny_${policy.name}',
-        WovenRing(
-          snakes: <WovenSnake>[
+        WovenRingChart(
+          segments: <WovenSegment>[
             for (var i = 0; i < 4; i++)
-              WovenSnake(
+              WovenSegment(
                 value: <double>[0.3, 39.7, 25, 35][i],
                 fill: WovenFill.solid(WovenPalette.quartet[i]),
               ),
           ],
-          style: WovenRingStyle(minimumPolicy: policy, surface: surface),
-          intro: WovenRingIntro.none,
+          style: WovenRingStyle(
+            smallValuePolicy: policy,
+            surfaceColor: surfaceColor,
+          ),
+          animation: WovenRingAnimation.none,
         ),
       );
     }
     await shot(
-      'Z_lift',
-      WovenRing(
-        snakes: <WovenSnake>[
+      'Z_shadow',
+      WovenRingChart(
+        segments: <WovenSegment>[
           for (var i = 0; i < 4; i++)
-            WovenSnake(
+            WovenSegment(
               value: <double>[37, 19, 29, 15][i],
               fill: WovenFill.solid(WovenPalette.quartet[i]),
             ),
         ],
-        style: const WovenRingStyle(lift: WovenLift(), surface: surface),
-        intro: WovenRingIntro.none,
+        style: const WovenRingStyle(
+          shadow: WovenShadow(),
+          surfaceColor: surfaceColor,
+        ),
+        animation: WovenRingAnimation.none,
       ),
     );
 
-    // ---- intro animation frames -------------------------------------------
-    for (final WovenRingIntro intro in <WovenRingIntro>[
-      WovenRingIntro.relay,
-      WovenRingIntro.bloom,
+    // ---- animation frames -------------------------------------------
+    for (final WovenRingAnimation animation in <WovenRingAnimation>[
+      WovenRingAnimation.sweep,
+      WovenRingAnimation.grow,
     ]) {
       for (final bool cw in <bool>[true, false]) {
         for (final int count in <int>[1, 4]) {
           for (final int ms in <int>[150, 350, 550, 750, 900, 1000]) {
             await shot(
-              'A_${intro.name}__${cw ? 'cw' : 'ccw'}__n${count}__$ms',
-              WovenRing(
-                snakes: <WovenSnake>[
+              'A_${animation.name}__${cw ? 'cw' : 'ccw'}__n${count}__$ms',
+              WovenRingChart(
+                segments: <WovenSegment>[
                   for (var i = 0; i < count; i++)
-                    WovenSnake(
+                    WovenSegment(
                       value: 1,
                       fill: WovenFill.shaded(
                         WovenPalette.quartet[i % 4],
@@ -288,8 +301,11 @@ void main() {
                       border: const WovenBorder(),
                     ),
                 ],
-                style: WovenRingStyle(clockwise: cw, surface: surface),
-                intro: intro,
+                style: WovenRingStyle(
+                  clockwise: cw,
+                  surfaceColor: surfaceColor,
+                ),
+                animation: animation,
               ),
               settleMs: ms,
             );

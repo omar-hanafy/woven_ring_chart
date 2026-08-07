@@ -8,16 +8,16 @@
 ///
 /// The spec, restated as three testable rules:
 ///
-///   1. A snake is the set of points within `band / 2` of the centreline arc it
+///   1. A segment is the set of points within `thickness / 2` of the centreline arc it
 ///      is bent along. That makes every visible edge a true circle of radius
-///      `band / 2`.
-///   2. Snakes are laid down in data order, one consistent direction round the
+///      `thickness / 2`.
+///   2. Segments are laid down in data order, one consistent direction round the
 ///      ring, each over its predecessor.
-///   3. The ordering is cyclic, so snake 0's head laps snake n-1's tail exactly
+///   3. The ordering is cyclic, so segment 0's head laps segment n-1's tail exactly
 ///      like every other joint.
 ///
 /// Rule 2 and 3 collapse into one predicate used everywhere below: at any
-/// covered point, the owner is the covering snake whose head tip is the closest
+/// covered point, the owner is the covering segment whose head tip is the closest
 /// one behind that point in the drawing direction.
 library;
 
@@ -38,25 +38,25 @@ import 'package:woven_ring_chart/woven_ring_chart.dart';
 class Ring {
   Ring({
     required this.side,
-    required double bandFraction,
+    required double thicknessFraction,
     required double overlapFraction,
     required this.startAngle,
     required this.clockwise,
-    WovenLift? lift,
+    WovenShadow? shadow,
   }) : center = Offset(side / 2, side / 2),
        outer =
            side / 2 -
-           (lift == null
+           (shadow == null
                ? 0.0
                : side *
-                     bandFraction *
-                     (lift.resolvedBlurFraction * 3 +
-                         lift.resolvedOffsetFraction)) {
-    band = 2 * outer * bandFraction;
-    cap = band / 2;
+                     thicknessFraction *
+                     (shadow.resolvedBlurFraction * 3 +
+                         shadow.resolvedOffsetFraction)) {
+    thickness = 2 * outer * thicknessFraction;
+    cap = thickness / 2;
     track = outer - cap;
     inner = track - cap;
-    jointLag = overlapFraction * band / track;
+    jointLag = overlapFraction * thickness / track;
     // Half the angular width of a round cap measured along the centreline
     // circle. Chord length between two centreline points an angle g apart is
     // 2 * track * sin(g / 2); the cap reaches exactly one cap radius.
@@ -69,7 +69,7 @@ class Ring {
   final double startAngle;
   final bool clockwise;
 
-  late final double band;
+  late final double thickness;
   late final double cap;
   late final double track;
   late final double inner;
@@ -84,7 +84,7 @@ class Ring {
   );
 }
 
-/// One snake's drawn extent, in centreline angles.
+/// One segment's drawn extent, in centreline angles.
 class Extent {
   const Extent(this.start, this.end, this.headTip, this.tailTip);
 
@@ -109,7 +109,7 @@ List<Extent> extentsFor(Ring r, List<double> fractions) {
   return out;
 }
 
-/// Signed distance from [p] to snake [e]'s silhouette surface. Negative inside.
+/// Signed distance from [p] to segment [e]'s silhouette surfaceColor. Negative inside.
 ///
 /// The silhouette is the capsule of radius `r.cap` around the centreline arc,
 /// so this is just `distance(p, arc) - cap`.
@@ -140,15 +140,15 @@ double wrapPositive(double a) {
   return v;
 }
 
-/// How far along snake [e] the point [p] lies, measured from the snake's head
-/// in the drawing direction, or null when [p] is not on that snake at all.
+/// How far along segment [e] the point [p] lies, measured from the segment's head
+/// in the drawing direction, or null when [p] is not on that segment at all.
 ///
-/// A polar angle is not enough on its own. A snake whose drawn span plus caps
+/// A polar angle is not enough on its own. A segment whose drawn span plus caps
 /// exceeds a full turn passes over the same angle twice, once as its head and
 /// once as its tail, and those are different places along its length with
 /// different neighbours above them. Where both apply the head is the later
 /// layer and wins, which is what makes the position negative there.
-double? alongSnake(Ring r, Extent e, Offset p) {
+double? alongSegment(Ring r, Extent e, Offset p) {
   final double dx = p.dx - r.center.dx;
   final double dy = p.dy - r.center.dy;
   final double rho = math.sqrt(dx * dx + dy * dy);
@@ -166,17 +166,17 @@ double? alongSnake(Ring r, Extent e, Offset p) {
   return null;
 }
 
-/// The spec's ownership rule, and the only one this file uses: of the snakes
+/// The spec's ownership rule, and the only one this file uses: of the segments
 /// covering [p], the visible one is whichever has travelled least far from its
 /// own head to get there.
 ///
-/// Returns the index of the snake that must be visible at [p], or -1 when [p]
-/// is on no snake at all.
+/// Returns the index of the segment that must be visible at [p], or -1 when [p]
+/// is on no segment at all.
 int ownerAt(Ring r, List<Extent> extents, List<int> active, Offset p) {
   var owner = -1;
   var best = double.infinity;
   for (final int i in active) {
-    final double? along = alongSnake(r, extents[i], p);
+    final double? along = alongSegment(r, extents[i], p);
     if (along == null) continue;
     if (along < best) {
       best = along;
@@ -238,8 +238,8 @@ int channelDistance(Rgba a, Rgba b) =>
 
 /// Distance from [pixel] to the closest colour the fill can legitimately show.
 ///
-/// [shadow] admits the ring-level head lift, which multiplies the fill by
-/// `1 - a` for some `a` between zero and the lift's own alpha. A darkened red is
+/// [shadow] admits the ring-level head shadow, which multiplies the fill by
+/// `1 - a` for some `a` between zero and the shadow's own alpha. A darkened red is
 /// still red, so this stays sharp enough to catch a wrong owner.
 int distanceToFill(Rgba pixel, WovenFill fill, {double shadow = 0.0}) {
   var best = 1 << 30;
@@ -264,7 +264,7 @@ int distanceToFill(Rgba pixel, WovenFill fill, {double shadow = 0.0}) {
 const double side = 480;
 
 /// The alpha of the neutral empty track. It is deliberately translucent so it
-/// reads as an absence on whatever surface the ring sits on, which means a ring
+/// reads as an absence on whatever surfaceColor the ring sits on, which means a ring
 /// in or near the empty state is never fully opaque.
 const int emptyTrackAlpha = 0x8C;
 
@@ -319,7 +319,7 @@ Future<Raster> capture(
 class Case {
   const Case({
     required this.name,
-    required this.snakes,
+    required this.segments,
     required this.style,
     this.margin = 3.0,
     this.tolerance = 4,
@@ -327,10 +327,10 @@ class Case {
   });
 
   final String name;
-  final List<WovenSnake> snakes;
+  final List<WovenSegment> segments;
   final WovenRingStyle style;
 
-  /// How far a sampled pixel must be from any silhouette surface to count as
+  /// How far a sampled pixel must be from any silhouette surfaceColor to count as
   /// unambiguously interior. Must exceed the border width when borders are on.
   final double margin;
   final int tolerance;
@@ -340,23 +340,23 @@ class Case {
 
   Ring get ring => Ring(
     side: side,
-    bandFraction: style.resolvedBandFraction,
+    thicknessFraction: style.resolvedThicknessFraction,
     overlapFraction: style.resolvedOverlapFraction,
     startAngle: style.resolvedStartAngle,
     clockwise: style.clockwise,
-    lift: style.lift,
+    shadow: style.shadow,
   );
 
-  /// The drawn share of the ring per snake, after the small-value policy.
+  /// The drawn share of the ring per segment, after the small-value policy.
   List<double> get fractions {
     final List<double>? override = expectedFractions;
     if (override != null) return override;
-    final double bf = style.resolvedBandFraction;
-    return wovenFractions(
-      <double>[for (final WovenSnake s in snakes) s.value],
-      // cap / track, expressed straight from the band fraction.
+    final double bf = style.resolvedThicknessFraction;
+    return wovenSegmentFractions(
+      <double>[for (final WovenSegment s in segments) s.value],
+      // cap / track, expressed straight from the thickness fraction.
       minimumFraction: math.asin(bf / (1 - bf)) / math.pi,
-      policy: style.minimumPolicy,
+      policy: style.smallValuePolicy,
     );
   }
 }
@@ -379,11 +379,11 @@ List<String> checkOwnership(Raster raster, Case c) {
 
   const int angleSamples = 1440;
   final List<double> radii = <double>[
-    r.track - r.band * 0.34,
-    r.track - r.band * 0.17,
+    r.track - r.thickness * 0.34,
+    r.track - r.thickness * 0.17,
     r.track,
-    r.track + r.band * 0.17,
-    r.track + r.band * 0.34,
+    r.track + r.thickness * 0.17,
+    r.track + r.thickness * 0.34,
   ];
 
   var tested = 0;
@@ -392,13 +392,13 @@ List<String> checkOwnership(Raster raster, Case c) {
     for (final double radius in radii) {
       final Offset p = r.at(radius, angle);
       // Only judge pixels that are unambiguously interior to exactly one owner
-      // and unambiguously clear of every other silhouette surface.
+      // and unambiguously clear of every other silhouette surfaceColor.
       final int expected = ownerAt(r, extents, active, p);
       if (expected < 0) continue;
       // Only judge pixels that are clear of every edge where ownership could
-      // legitimately change: each silhouette surface, and each cap circle. A
+      // legitimately change: each silhouette surfaceColor, and each cap circle. A
       // cap circle is an ownership boundary even well inside a silhouette,
-      // because a snake that laps its own tail meets itself there.
+      // because a segment that laps its own tail meets itself there.
       var ambiguous = false;
       for (final int i in active) {
         if (signedDistance(r, extents[i], p).abs() < c.margin) {
@@ -424,18 +424,20 @@ List<String> checkOwnership(Raster raster, Case c) {
         );
         continue;
       }
-      final double shadow = c.style.lift == null ? 0.0 : c.style.lift!.color.a;
+      final double shadow = c.style.shadow == null
+          ? 0.0
+          : c.style.shadow!.color.a;
       final int distance = distanceToFill(
         pixel,
-        c.snakes[expected].fill,
+        c.segments[expected].fill,
         shadow: shadow,
       );
       if (distance > c.tolerance) {
-        // Name whichever snake it actually looks like: a wrong owner is a far
+        // Name whichever segment it actually looks like: a wrong owner is a far
         // more useful failure message than a colour distance.
         var looksLike = -1;
         for (final int i in active) {
-          if (distanceToFill(pixel, c.snakes[i].fill, shadow: shadow) <=
+          if (distanceToFill(pixel, c.segments[i].fill, shadow: shadow) <=
               c.tolerance) {
             looksLike = i;
             break;
@@ -456,7 +458,7 @@ List<String> checkOwnership(Raster raster, Case c) {
   return violations;
 }
 
-/// B. The band is continuously covered: no gap anywhere on the centreline.
+/// B. The thickness is continuously covered: no gap anywhere on the centreline.
 List<String> checkCoverage(Raster raster, Case c) {
   final Ring r = c.ring;
   final List<String> violations = <String>[];
@@ -470,7 +472,7 @@ List<String> checkCoverage(Raster raster, Case c) {
       final Rgba pixel = raster.atPoint(r.at(radius, angle));
       if (pixel.a != 255) {
         violations.add(
-          '${c.name}: uncovered band pixel angle=${angle.toStringAsFixed(4)} '
+          '${c.name}: uncovered thickness pixel angle=${angle.toStringAsFixed(4)} '
           'r=${radius.toStringAsFixed(1)} pixel=$pixel',
         );
         return violations;
@@ -484,12 +486,12 @@ List<String> checkCoverage(Raster raster, Case c) {
 List<String> checkSilhouette(Raster raster, Case c) {
   final Ring r = c.ring;
   final List<String> violations = <String>[];
-  // A lift is allowed to breathe past the outer circle; that is exactly what
+  // A shadow is allowed to breathe past the outer circle; that is exactly what
   // the ring shrank to make room for. Nothing may pass its documented reach.
-  final WovenLift? lift = c.style.lift;
-  final double outerProbe = lift == null
+  final WovenShadow? shadow = c.style.shadow;
+  final double outerProbe = shadow == null
       ? r.outer + 2.0
-      : r.outer + r.band * lift.reach + 2.0;
+      : r.outer + r.thickness * shadow.reach + 2.0;
   for (var s = 0; s < 1440; s++) {
     final double angle = s * 2 * math.pi / 1440;
     // Just outside the outer circle and just inside the hole must be clear.
@@ -518,14 +520,14 @@ List<String> checkSilhouette(Raster raster, Case c) {
 /// [checkSilhouette] samples one ring of points a clear two pixels outside each
 /// edge, so it cannot see a spill narrower than a whole pixel - and a stroke
 /// centred on the boundary spills exactly half its width, which for every
-/// hairline in this component is well under one pixel at a normal density. This
+/// hairline in this chart is well under one pixel at a normal density. This
 /// renders several device pixels per logical pixel and scans every one of them,
 /// so a half-pixel bleed is a hard failure instead of an invisible one.
 ///
 /// [slack] is the margin the true circles' own antialiasing is allowed. The
 /// silhouette is exact, so the only partial coverage belongs to the pixel the
 /// boundary passes through; a quarter of a logical pixel clears it with room to
-/// spare and still catches every stroke this component can draw.
+/// spare and still catches every stroke this chart can draw.
 List<String> checkSilhouetteSubPixel(
   Raster raster,
   Ring r,
@@ -563,7 +565,7 @@ List<String> checkSilhouetteSubPixel(
   return violations;
 }
 
-/// D. Every visible colour boundary lies on a circle of radius `band / 2`
+/// D. Every visible colour boundary lies on a circle of radius `thickness / 2`
 /// centred on the successor head's cap centre. This is the "true semicircle"
 /// promise, measured rather than assumed.
 List<String> checkCapProfiles(Raster raster, Case c) {
@@ -581,19 +583,21 @@ List<String> checkCapProfiles(Raster raster, Case c) {
     final Offset capCentre = r.at(r.track, extents[i].start);
     final int predecessor =
         active[(active.indexOf(i) - 1 + active.length) % active.length];
-    // Walk radii across the band and find where the colour flips from the
-    // predecessor to this snake. Every such point must sit on the cap circle.
-    // Sample the middle of the band. A cap circle is tangent to both band
+    // Walk radii across the thickness and find where the colour flips from the
+    // predecessor to this segment. Every such point must sit on the cap circle.
+    // Sample the middle of the thickness. A cap circle is tangent to both thickness
     // edges, so near the edges the boundary runs almost parallel to the sweep
     // and cannot be located to sub-pixel accuracy by any method.
     var samples = 0;
     const int radialSteps = 17;
     for (var step = 0; step <= radialSteps; step++) {
       final double radius =
-          r.track - r.band * 0.35 + r.band * 0.70 * step / radialSteps;
+          r.track -
+          r.thickness * 0.35 +
+          r.thickness * 0.70 * step / radialSteps;
       // Sweep backwards from the head centre into the predecessor. The edge has
-      // an antialiased band that matches neither colour, so bracket it: the
-      // last pixel that is still this snake and the first that is already the
+      // an antialiased thickness that matches neither colour, so bracket it: the
+      // last pixel that is still this segment and the first that is already the
       // predecessor. The true edge is between them.
       const int sweep = 400;
       const double span = 1.35;
@@ -605,12 +609,13 @@ List<String> checkCapProfiles(Raster raster, Case c) {
         final Rgba pixel = raster.atPoint(r.at(radius, angle));
         if (pixel.a != 255) break;
         if (firstPrev == null &&
-            distanceToFill(pixel, c.snakes[i].fill) <= c.tolerance) {
+            distanceToFill(pixel, c.segments[i].fill) <= c.tolerance) {
           lastSelf = t;
           continue;
         }
         if (lastSelf != null &&
-            distanceToFill(pixel, c.snakes[predecessor].fill) <= c.tolerance) {
+            distanceToFill(pixel, c.segments[predecessor].fill) <=
+                c.tolerance) {
           firstPrev = t;
           break;
         }
@@ -653,7 +658,7 @@ List<String> checkCapProfiles(Raster raster, Case c) {
 
 /// E. Structural check usable when exact fractions are unknown (animation).
 /// Walks the centreline and confirms the colour runs are exactly the expected
-/// snakes, once each, in data order.
+/// segments, once each, in data order.
 List<String> checkRunStructure(
   Raster raster,
   Ring r,
@@ -730,7 +735,9 @@ List<String> checkRunStructure(
   }
   final int offset = merged.indexOf(expectedOrder.first);
   if (offset < 0) {
-    violations.add('$label: expected snake ${expectedOrder.first} is missing');
+    violations.add(
+      '$label: expected segment ${expectedOrder.first} is missing',
+    );
     return violations;
   }
   for (var i = 0; i < expectedOrder.length; i++) {
@@ -772,12 +779,12 @@ const List<Color> tenColors = <Color>[
   cRust,
 ];
 
-List<WovenSnake> solids(
+List<WovenSegment> solids(
   List<double> values, [
   List<Color> colors = tenColors,
-]) => <WovenSnake>[
+]) => <WovenSegment>[
   for (var i = 0; i < values.length; i++)
-    WovenSnake(value: values[i], fill: WovenFill.solid(colors[i])),
+    WovenSegment(value: values[i], fill: WovenFill.solid(colors[i])),
 ];
 
 void main() {
@@ -786,58 +793,65 @@ void main() {
   // =========================================================================
 
   group('A. geometry and data', () {
-    test('A1 cap radius is exactly half the band at every band fraction', () {
-      for (final double bf in <double>[
-        0.10,
-        0.12,
-        0.15,
-        0.20,
-        0.25,
-        0.30,
-        0.4,
-      ]) {
-        final WovenRingStyle style = WovenRingStyle(bandFraction: bf);
-        final WovenRingGeometry g = WovenRingGeometry.forSize(
-          const Size.square(side),
-          style,
-        );
-        expect(
-          g.capRadius,
-          closeTo(g.band / 2, 1e-12),
-          reason: 'bandFraction=$bf',
-        );
-        // Silhouette closes exactly on the outer circle.
-        expect(
-          g.trackRadius + g.capRadius,
-          closeTo(g.outerRadius, 1e-9),
-          reason: 'bandFraction=$bf',
-        );
-        expect(
-          g.innerRadius,
-          closeTo(g.trackRadius - g.capRadius, 1e-12),
-          reason: 'bandFraction=$bf',
-        );
-        // And matches the independently derived ring.
-        final Ring r = Ring(
-          side: side,
-          bandFraction: style.resolvedBandFraction,
-          overlapFraction: style.resolvedOverlapFraction,
-          startAngle: style.resolvedStartAngle,
-          clockwise: true,
-        );
-        expect(g.band, closeTo(r.band, 1e-9), reason: 'bandFraction=$bf');
-        expect(
-          g.trackRadius,
-          closeTo(r.track, 1e-9),
-          reason: 'bandFraction=$bf',
-        );
-        expect(
-          g.jointLag,
-          closeTo(r.jointLag, 1e-9),
-          reason: 'bandFraction=$bf',
-        );
-      }
-    });
+    test(
+      'A1 cap radius is exactly half the thickness at every thickness fraction',
+      () {
+        for (final double bf in <double>[
+          0.10,
+          0.12,
+          0.15,
+          0.20,
+          0.25,
+          0.30,
+          0.4,
+        ]) {
+          final WovenRingStyle style = WovenRingStyle(thicknessFraction: bf);
+          final WovenRingGeometry g = WovenRingGeometry.forSize(
+            const Size.square(side),
+            style,
+          );
+          expect(
+            g.capRadius,
+            closeTo(g.thickness / 2, 1e-12),
+            reason: 'thicknessFraction=$bf',
+          );
+          // Silhouette closes exactly on the outer circle.
+          expect(
+            g.trackRadius + g.capRadius,
+            closeTo(g.outerRadius, 1e-9),
+            reason: 'thicknessFraction=$bf',
+          );
+          expect(
+            g.innerRadius,
+            closeTo(g.trackRadius - g.capRadius, 1e-12),
+            reason: 'thicknessFraction=$bf',
+          );
+          // And matches the independently derived ring.
+          final Ring r = Ring(
+            side: side,
+            thicknessFraction: style.resolvedThicknessFraction,
+            overlapFraction: style.resolvedOverlapFraction,
+            startAngle: style.resolvedStartAngle,
+            clockwise: true,
+          );
+          expect(
+            g.thickness,
+            closeTo(r.thickness, 1e-9),
+            reason: 'thicknessFraction=$bf',
+          );
+          expect(
+            g.trackRadius,
+            closeTo(r.track, 1e-9),
+            reason: 'thicknessFraction=$bf',
+          );
+          expect(
+            g.jointLag,
+            closeTo(r.jointLag, 1e-9),
+            reason: 'thicknessFraction=$bf',
+          );
+        }
+      },
+    );
 
     test('A2 fractions are finite, ordered, and sum to one', () {
       final List<List<double>> inputs = <List<double>>[
@@ -852,9 +866,9 @@ void main() {
         <double>[1e-300, 1, 1],
         <double>[0, 0, 0],
       ];
-      for (final WovenMinimumPolicy policy in WovenMinimumPolicy.values) {
+      for (final WovenSmallValuePolicy policy in WovenSmallValuePolicy.values) {
         for (final List<double> input in inputs) {
-          final List<double> f = wovenFractions(
+          final List<double> f = wovenSegmentFractions(
             input,
             minimumFraction: 0.0736,
             policy: policy,
@@ -879,9 +893,9 @@ void main() {
     });
 
     test('A3 empty input yields empty output', () {
-      for (final WovenMinimumPolicy policy in WovenMinimumPolicy.values) {
+      for (final WovenSmallValuePolicy policy in WovenSmallValuePolicy.values) {
         expect(
-          wovenFractions(
+          wovenSegmentFractions(
             const <double>[],
             minimumFraction: 0.07,
             policy: policy,
@@ -891,12 +905,12 @@ void main() {
       }
     });
 
-    test('A4 enforce lifts every positive value to the minimum', () {
+    test('A4 enforce raises every positive value to the minimum', () {
       const double minimum = 0.0736;
-      final List<double> f = wovenFractions(
+      final List<double> f = wovenSegmentFractions(
         <double>[0.3, 39.7, 25, 35],
         minimumFraction: minimum,
-        policy: WovenMinimumPolicy.enforce,
+        policy: WovenSmallValuePolicy.enforce,
       );
       for (var i = 0; i < f.length; i++) {
         expect(
@@ -917,10 +931,10 @@ void main() {
       List<double>? previous;
       for (var step = 0; step <= 400; step++) {
         final double v = 0.5 + step * 0.05;
-        final List<double> f = wovenFractions(
+        final List<double> f = wovenSegmentFractions(
           <double>[v, 30, 30, 30],
           minimumFraction: minimum,
-          policy: WovenMinimumPolicy.enforce,
+          policy: WovenSmallValuePolicy.enforce,
         );
         if (previous != null) {
           for (var i = 0; i < f.length; i++) {
@@ -936,10 +950,10 @@ void main() {
     });
 
     test('A6 too many entries falls back to an honest equal share', () {
-      final List<double> f = wovenFractions(
+      final List<double> f = wovenSegmentFractions(
         List<double>.filled(40, 1),
         minimumFraction: 0.0736,
-        policy: WovenMinimumPolicy.enforce,
+        policy: WovenSmallValuePolicy.enforce,
       );
       for (final double v in f) {
         expect(v, closeTo(1 / 40, 1e-9));
@@ -957,10 +971,10 @@ void main() {
           40,
           40,
         ];
-        final List<double> f = wovenFractions(
+        final List<double> f = wovenSegmentFractions(
           values,
           minimumFraction: minimum,
-          policy: WovenMinimumPolicy.allowVanish,
+          policy: WovenSmallValuePolicy.allowVanish,
         );
         expect(f[0], 0.0, reason: 'below threshold must vanish: $f');
         expect(f[1], greaterThan(0.0), reason: 'above threshold must stay: $f');
@@ -986,8 +1000,8 @@ void main() {
         ccw,
       );
       const List<double> f = <double>[0.4, 0.35, 0.25];
-      final List<WovenSnakeExtent> a = gcw.extents(f, 0.4, clockwise: true);
-      final List<WovenSnakeExtent> b = gccw.extents(f, 0.4, clockwise: false);
+      final List<WovenSegmentExtent> a = gcw.extents(f, 0.4, clockwise: true);
+      final List<WovenSegmentExtent> b = gccw.extents(f, 0.4, clockwise: false);
       expect(a.first.boundaryStart, closeTo(0.4, 1e-12));
       expect(b.first.boundaryStart, closeTo(0.4, 1e-12));
       for (var i = 0; i < f.length; i++) {
@@ -1003,7 +1017,7 @@ void main() {
           reason: 'index $i',
         );
       }
-      // Each snake's tail lands exactly on the next snake's data boundary.
+      // Each segment's tail lands exactly on the next segment's data boundary.
       for (var i = 0; i < f.length - 1; i++) {
         expect(a[i].end, closeTo(a[i + 1].boundaryStart, 1e-12));
         expect(b[i].end, closeTo(b[i + 1].boundaryStart, 1e-12));
@@ -1036,116 +1050,116 @@ void main() {
   final List<Case> catalog = <Case>[
     Case(
       name: 'B01 four equal CW',
-      snakes: solids(<double>[25, 25, 25, 25], tenColors),
+      segments: solids(<double>[25, 25, 25, 25], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B02 four equal CCW',
-      snakes: solids(<double>[25, 25, 25, 25], tenColors),
+      segments: solids(<double>[25, 25, 25, 25], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
       name: 'B03 four unequal CW',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B04 four unequal CCW',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
       name: 'B05 non-cardinal start CW',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(startAngle: 0.7331),
     ),
     Case(
       name: 'B06 non-cardinal start CCW',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(startAngle: 2.4312, clockwise: false),
     ),
     Case(
-      name: 'B07 three snakes',
-      snakes: solids(<double>[50, 30, 20], tenColors),
+      name: 'B07 three segments',
+      segments: solids(<double>[50, 30, 20], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B08 two snakes CW',
-      snakes: solids(<double>[60, 40], tenColors),
+      name: 'B08 two segments CW',
+      segments: solids(<double>[60, 40], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B09 two snakes CCW',
-      snakes: solids(<double>[60, 40], tenColors),
+      name: 'B09 two segments CCW',
+      segments: solids(<double>[60, 40], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
-      name: 'B10 two equal snakes',
-      snakes: solids(<double>[50, 50], tenColors),
+      name: 'B10 two equal segments',
+      segments: solids(<double>[50, 50], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B11 ten equal CW',
-      snakes: solids(List<double>.filled(10, 10), tenColors),
+      segments: solids(List<double>.filled(10, 10), tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B12 ten equal CCW',
-      snakes: solids(List<double>.filled(10, 10), tenColors),
+      segments: solids(List<double>.filled(10, 10), tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
       name: 'B13 ten unequal',
-      snakes: solids(<double>[6, 14, 8, 12, 9, 15, 7, 11, 10, 8], tenColors),
+      segments: solids(<double>[6, 14, 8, 12, 9, 15, 7, 11, 10, 8], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B14 minimum band 0.12',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.12),
+      name: 'B14 minimum thickness 0.12',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(thicknessFraction: 0.12),
       margin: 2.5,
     ),
     Case(
-      name: 'B15 maximum band 0.30',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.30),
+      name: 'B15 maximum thickness 0.30',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(thicknessFraction: 0.30),
     ),
     Case(
-      name: 'B16 band clamps below range',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.01),
+      name: 'B16 thickness clamps below range',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(thicknessFraction: 0.01),
       margin: 2.5,
     ),
     Case(
-      name: 'B17 band clamps above range',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.95),
+      name: 'B17 thickness clamps above range',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(thicknessFraction: 0.95),
     ),
     Case(
       name: 'B18 overlap 30 percent',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(overlapFraction: 0.30),
     ),
     Case(
       name: 'B19 overlap 90 percent',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(overlapFraction: 0.90),
     ),
     Case(
       name: 'B20 overlap 100 percent',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(overlapFraction: 1.0),
     ),
     Case(
       name: 'B21 overlap 25 percent CCW',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(overlapFraction: 0.25, clockwise: false),
     ),
     Case(
       name: 'B22 gradient along length',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.shaded(tenColors[i], step: 0.08),
           ),
@@ -1154,9 +1168,9 @@ void main() {
     ),
     Case(
       name: 'B23 gradient tail to head',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.shaded(tenColors[i], step: 0.08),
           ),
@@ -1166,21 +1180,23 @@ void main() {
       ),
     ),
     Case(
-      name: 'B24 gradient across band',
-      snakes: <WovenSnake>[
+      name: 'B24 gradient across thickness',
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.shaded(tenColors[i], step: 0.08),
           ),
       ],
-      style: const WovenRingStyle(gradientAxis: WovenGradientAxis.acrossBand),
+      style: const WovenRingStyle(
+        gradientAxis: WovenGradientAxis.acrossThickness,
+      ),
     ),
     Case(
       name: 'B25 mixed solid and gradient',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: i.isOdd
                 ? WovenFill.shaded(tenColors[i], step: 0.08)
@@ -1191,9 +1207,9 @@ void main() {
     ),
     Case(
       name: 'B26 all borders',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.solid(tenColors[i]),
             border: const WovenBorder(),
@@ -1204,9 +1220,9 @@ void main() {
     ),
     Case(
       name: 'B27 mixed borders',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.solid(tenColors[i]),
             border: i.isOdd ? const WovenBorder() : null,
@@ -1217,9 +1233,9 @@ void main() {
     ),
     Case(
       name: 'B28 diagnostic wide borders',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.solid(tenColors[i]),
             border: const WovenBorder(widthFraction: 0.05),
@@ -1230,9 +1246,9 @@ void main() {
     ),
     Case(
       name: 'B29 darker-fill borders',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 4; i++)
-          WovenSnake(
+          WovenSegment(
             value: <double>[37, 19, 29, 15][i],
             fill: WovenFill.solid(tenColors[i]),
             border: const WovenBorder.darkerFill(),
@@ -1242,136 +1258,142 @@ void main() {
       margin: 5.0,
     ),
     Case(
-      name: 'B30 head lift',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(lift: WovenLift()),
-      // The lift darkens the predecessor under each head, so keep clear of it.
+      name: 'B30 head shadow',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(shadow: WovenShadow()),
+      // The shadow darkens the predecessor under each head, so keep clear of it.
       margin: 6.0,
       tolerance: 6,
     ),
     Case(
       name: 'B31 tiny value enforced',
-      snakes: solids(<double>[0.3, 39.7, 25, 35], tenColors),
+      segments: solids(<double>[0.3, 39.7, 25, 35], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B32 tiny value enforced CCW',
-      snakes: solids(<double>[0.3, 39.7, 25, 35], tenColors),
+      segments: solids(<double>[0.3, 39.7, 25, 35], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
       name: 'B33 tiny value allowed to vanish',
-      snakes: solids(<double>[0.3, 39.7, 25, 35], tenColors),
+      segments: solids(<double>[0.3, 39.7, 25, 35], tenColors),
       style: const WovenRingStyle(
-        minimumPolicy: WovenMinimumPolicy.allowVanish,
+        smallValuePolicy: WovenSmallValuePolicy.allowVanish,
       ),
     ),
     Case(
       name: 'B34 zero mixed with data',
-      snakes: solids(<double>[30, 0, 40, 30], tenColors),
+      segments: solids(<double>[30, 0, 40, 30], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
       name: 'B35 dense twelve equal',
-      snakes: <WovenSnake>[
+      segments: <WovenSegment>[
         for (var i = 0; i < 12; i++)
-          WovenSnake(value: 1, fill: WovenFill.solid(tenColors[i % 10])),
+          WovenSegment(value: 1, fill: WovenFill.solid(tenColors[i % 10])),
       ],
       style: const WovenRingStyle(),
       margin: 2.5,
     ),
     Case(
       name: 'B36 selected border only',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(),
       margin: 5.0,
     ),
     Case(
-      name: 'B37 dark surface',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(surface: Color(0xFF101418)),
+      name: 'B37 dark surfaceColor',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(surfaceColor: Color(0xFF101418)),
     ),
     Case(
-      name: 'B38 wide band with 90 percent overlap',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.30, overlapFraction: 0.90),
+      name: 'B38 wide thickness with 90 percent overlap',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(
+        thicknessFraction: 0.30,
+        overlapFraction: 0.90,
+      ),
     ),
     Case(
-      name: 'B39 thin band with 90 percent overlap',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
-      style: const WovenRingStyle(bandFraction: 0.12, overlapFraction: 0.90),
+      name: 'B39 thin thickness with 90 percent overlap',
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
+      style: const WovenRingStyle(
+        thicknessFraction: 0.12,
+        overlapFraction: 0.90,
+      ),
       margin: 2.5,
     ),
-    // Three snakes is the smallest ring where a whole triple of silhouettes can
-    // overlap one pixel, and two snakes with a very short one is where both
+    // Three segments is the smallest ring where a whole triple of silhouettes can
+    // overlap one pixel, and two segments with a very short one is where both
     // joints merge. Both are the cases the generic cyclic mask is least likely
     // to survive.
     Case(
-      name: 'B41 three snakes with a short one',
-      snakes: solids(<double>[80, 10, 10], tenColors),
+      name: 'B41 three segments with a short one',
+      segments: solids(<double>[80, 10, 10], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B42 three snakes short in the middle',
-      snakes: solids(<double>[10, 80, 10], tenColors),
+      name: 'B42 three segments short in the middle',
+      segments: solids(<double>[10, 80, 10], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B43 three snakes with a short one CCW',
-      snakes: solids(<double>[80, 10, 10], tenColors),
+      name: 'B43 three segments with a short one CCW',
+      segments: solids(<double>[80, 10, 10], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
-      name: 'B44 two snakes ninety ten',
-      snakes: solids(<double>[90, 10], tenColors),
+      name: 'B44 two segments ninety ten',
+      segments: solids(<double>[90, 10], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B45 two snakes ten ninety',
-      snakes: solids(<double>[10, 90], tenColors),
+      name: 'B45 two segments ten ninety',
+      segments: solids(<double>[10, 90], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B46 two snakes ninety ten CCW',
-      snakes: solids(<double>[90, 10], tenColors),
+      name: 'B46 two segments ninety ten CCW',
+      segments: solids(<double>[90, 10], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
-    // Just past the point where a snake's own head and tail caps touch, which
+    // Just past the point where a segment's own head and tail caps touch, which
     // is where its outline self-intersects: f0 * tau + jointLag + 2 * capHalf
     // reaches a full turn at about 88 percent for the default style.
     Case(
-      name: 'B49 two snakes at the self-contact threshold',
-      snakes: solids(<double>[89, 11], tenColors),
+      name: 'B49 two segments at the self-contact threshold',
+      segments: solids(<double>[89, 11], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B50 two snakes just past self-contact',
-      snakes: solids(<double>[91.5, 8.5], tenColors),
+      name: 'B50 two segments just past self-contact',
+      segments: solids(<double>[91.5, 8.5], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B51 two snakes past self-contact CCW',
-      snakes: solids(<double>[91.5, 8.5], tenColors),
+      name: 'B51 two segments past self-contact CCW',
+      segments: solids(<double>[91.5, 8.5], tenColors),
       style: const WovenRingStyle(clockwise: false),
     ),
     Case(
-      name: 'B52 three snakes with a self-contacting first',
-      snakes: solids(<double>[84, 8, 8], tenColors),
+      name: 'B52 three segments with a self-contacting first',
+      segments: solids(<double>[84, 8, 8], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B47 four snakes with a short one',
-      snakes: solids(<double>[70, 10, 10, 10], tenColors),
+      name: 'B47 four segments with a short one',
+      segments: solids(<double>[70, 10, 10, 10], tenColors),
       style: const WovenRingStyle(),
     ),
     Case(
-      name: 'B48 three snakes short one wide overlap',
-      snakes: solids(<double>[80, 10, 10], tenColors),
+      name: 'B48 three segments short one wide overlap',
+      segments: solids(<double>[80, 10, 10], tenColors),
       style: const WovenRingStyle(overlapFraction: 1.0),
     ),
     Case(
       name: 'B40 negative start angle wrap',
-      snakes: solids(<double>[37, 19, 29, 15], tenColors),
+      segments: solids(<double>[37, 19, 29, 15], tenColors),
       style: const WovenRingStyle(startAngle: -3.9),
     ),
   ];
@@ -1381,11 +1403,11 @@ void main() {
       testWidgets(c.name, (WidgetTester tester) async {
         final Raster raster = await render(
           tester,
-          WovenRing(
-            snakes: c.snakes,
+          WovenRingChart(
+            segments: c.segments,
             style: c.style,
-            intro: WovenRingIntro.none,
-            highlighted: c.name.contains('selected') ? 2 : null,
+            animation: WovenRingAnimation.none,
+            highlightedIndex: c.name.contains('selected') ? 2 : null,
           ),
         );
         final List<String> violations = <String>[
@@ -1402,16 +1424,16 @@ void main() {
     for (final Case c in catalog.where(
       (Case c) =>
           !c.name.contains('border') &&
-          !c.name.contains('lift') &&
+          !c.name.contains('shadow') &&
           !c.name.contains('gradient'),
     )) {
       testWidgets(c.name, (WidgetTester tester) async {
         final Raster raster = await render(
           tester,
-          WovenRing(
-            snakes: c.snakes,
+          WovenRingChart(
+            segments: c.segments,
             style: c.style,
-            intro: WovenRingIntro.none,
+            animation: WovenRingAnimation.none,
           ),
         );
         final List<String> violations = checkCapProfiles(raster, c);
@@ -1423,9 +1445,9 @@ void main() {
   // =========================================================================
   // Section C2 - the silhouette, measured below the pixel
   //
-  // Every hairline this component draws sits on a curve, and two of those
-  // curves - the traced outline and the single snake's self-joint cap - run
-  // right up to the edge of the band. A stroke centred on the boundary spills
+  // Every hairline this chart draws sits on a curve, and two of those
+  // curves - the traced outline and the single segment's self-joint cap - run
+  // right up to the edge of the thickness. A stroke centred on the boundary spills
   // half its width past it. At one device pixel per logical pixel that spill is
   // invisible; on a retina display it is a visible whisker poking out of the
   // ring. Render dense and scan every pixel.
@@ -1433,50 +1455,53 @@ void main() {
 
   group('C2. nothing paints outside the silhouette, sub-pixel', () {
     const double density = 4;
-    final List<({String name, WovenRingStyle style, List<WovenSnake> snakes})>
-    cases = <({String name, WovenRingStyle style, List<WovenSnake> snakes})>[
+    final List<
+      ({String name, WovenRingStyle style, List<WovenSegment> segments})
+    >
+    cases = <({String name, WovenRingStyle style, List<WovenSegment> segments})>[
       for (final bool cw in <bool>[true, false])
-        for (final WovenSingleSnakeStyle single in WovenSingleSnakeStyle.values)
+        for (final WovenSingleSegmentStyle single
+            in WovenSingleSegmentStyle.values)
           (
             name: 'single 100 percent ${single.name} ${cw ? 'cw' : 'ccw'}',
-            style: WovenRingStyle(clockwise: cw, singleSnakeStyle: single),
-            snakes: solids(<double>[100], <Color>[cBlue]),
+            style: WovenRingStyle(clockwise: cw, singleSegmentStyle: single),
+            segments: solids(<double>[100], <Color>[cBlue]),
           ),
       // The self-joint is the one stroke whose two ends land exactly on the
       // silhouette, so it is named explicitly rather than inherited: the
       // default is smooth, and a case that quietly stopped drawing the joint
       // would still pass while covering nothing.
       (
-        name: 'single 100 percent jointed, thin band',
+        name: 'single 100 percent jointed, thin thickness',
         style: const WovenRingStyle(
-          bandFraction: 0.12,
-          singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+          thicknessFraction: 0.12,
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
         ),
-        snakes: solids(<double>[100], <Color>[cBlue]),
+        segments: solids(<double>[100], <Color>[cBlue]),
       ),
       (
-        name: 'single 100 percent jointed, wide band',
+        name: 'single 100 percent jointed, wide thickness',
         style: const WovenRingStyle(
-          bandFraction: 0.30,
-          singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+          thicknessFraction: 0.30,
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
         ),
-        snakes: solids(<double>[100], <Color>[cBlue]),
+        segments: solids(<double>[100], <Color>[cBlue]),
       ),
       (
         name: 'single 100 percent jointed, off-axis start',
         style: const WovenRingStyle(
           startAngle: 0.7,
-          singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
         ),
-        snakes: solids(<double>[100], <Color>[cBlue]),
+        segments: solids(<double>[100], <Color>[cBlue]),
       ),
       (
         name: 'single 100 percent jointed and bordered',
         style: const WovenRingStyle(
-          singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
         ),
-        snakes: <WovenSnake>[
-          const WovenSnake(
+        segments: <WovenSegment>[
+          const WovenSegment(
             value: 100,
             fill: WovenFill.solid(cBlue),
             border: WovenBorder(),
@@ -1486,10 +1511,10 @@ void main() {
       (
         name: 'single 100 percent jointed, wide diagnostic border',
         style: const WovenRingStyle(
-          singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
         ),
-        snakes: <WovenSnake>[
-          const WovenSnake(
+        segments: <WovenSegment>[
+          const WovenSegment(
             value: 100,
             fill: WovenFill.solid(cBlue),
             border: WovenBorder(widthFraction: 0.05),
@@ -1497,11 +1522,11 @@ void main() {
         ],
       ),
       (
-        name: 'four bordered snakes',
+        name: 'four bordered segments',
         style: const WovenRingStyle(),
-        snakes: <WovenSnake>[
+        segments: <WovenSegment>[
           for (var i = 0; i < 4; i++)
-            WovenSnake(
+            WovenSegment(
               value: 25,
               fill: WovenFill.solid(tenColors[i]),
               border: const WovenBorder(),
@@ -1509,32 +1534,37 @@ void main() {
         ],
       ),
       (
-        name: 'four plain snakes',
+        name: 'four plain segments',
         style: const WovenRingStyle(),
-        snakes: solids(<double>[25, 25, 25, 25]),
+        segments: solids(<double>[25, 25, 25, 25]),
       ),
       (
-        name: 'ninety percent self-lapping snake',
+        name: 'ninety percent self-lapping segment',
         style: const WovenRingStyle(),
-        snakes: solids(<double>[90, 10]),
+        segments: solids(<double>[90, 10]),
       ),
     ];
 
-    for (final ({String name, WovenRingStyle style, List<WovenSnake> snakes}) c
+    for (final ({
+          String name,
+          WovenRingStyle style,
+          List<WovenSegment> segments,
+        })
+        c
         in cases) {
       testWidgets('C2 ${c.name}', (WidgetTester tester) async {
         final Raster raster = await render(
           tester,
-          WovenRing(
-            snakes: c.snakes,
+          WovenRingChart(
+            segments: c.segments,
             style: c.style,
-            intro: WovenRingIntro.none,
+            animation: WovenRingAnimation.none,
           ),
           pixelRatio: density,
         );
         final Ring r = Ring(
           side: side,
-          bandFraction: c.style.resolvedBandFraction,
+          thicknessFraction: c.style.resolvedThicknessFraction,
           overlapFraction: c.style.resolvedOverlapFraction,
           startAngle: c.style.resolvedStartAngle,
           clockwise: c.style.clockwise,
@@ -1554,11 +1584,11 @@ void main() {
       // Jointed on purpose: the merge path draws the self-joint from its own
       // call site, so the default style would leave that branch uncovered.
       const WovenRingStyle style = WovenRingStyle(
-        singleSnakeStyle: WovenSingleSnakeStyle.jointed,
+        singleSegmentStyle: WovenSingleSegmentStyle.jointed,
       );
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
@@ -1570,10 +1600,10 @@ void main() {
             key: key,
             child: SizedBox.square(
               dimension: side,
-              child: WovenRing(
-                snakes: solids(values),
+              child: WovenRingChart(
+                segments: solids(values),
                 style: style,
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
               ),
             ),
           ),
@@ -1610,11 +1640,11 @@ void main() {
       const WovenRingStyle style = WovenRingStyle();
       final Raster raster = await render(
         tester,
-        const WovenRing.empty(style: style),
+        const WovenRingChart.empty(style: style),
       );
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
@@ -1644,7 +1674,7 @@ void main() {
       }
     });
 
-    testWidgets('D2 loading spins one snake and stops when replaced', (
+    testWidgets('D2 loading spins one segment and stops when replaced', (
       WidgetTester tester,
     ) async {
       final GlobalKey key = GlobalKey();
@@ -1656,7 +1686,7 @@ void main() {
               key: key,
               child: const SizedBox.square(
                 dimension: side,
-                child: WovenRing.loading(),
+                child: WovenRingChart.loading(),
               ),
             ),
           ),
@@ -1679,9 +1709,9 @@ void main() {
               key: key,
               child: SizedBox.square(
                 dimension: side,
-                child: WovenRing(
-                  snakes: solids(<double>[50, 50], tenColors),
-                  intro: WovenRingIntro.none,
+                child: WovenRingChart(
+                  segments: solids(<double>[50, 50], tenColors),
+                  animation: WovenRingAnimation.none,
                 ),
               ),
             ),
@@ -1700,22 +1730,23 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('D3 a single 100 percent snake fills the whole annulus', (
+    testWidgets('D3 a single 100 percent segment fills the whole annulus', (
       WidgetTester tester,
     ) async {
-      for (final WovenSingleSnakeStyle single in WovenSingleSnakeStyle.values) {
-        final WovenRingStyle style = WovenRingStyle(singleSnakeStyle: single);
+      for (final WovenSingleSegmentStyle single
+          in WovenSingleSegmentStyle.values) {
+        final WovenRingStyle style = WovenRingStyle(singleSegmentStyle: single);
         final Raster raster = await render(
           tester,
-          WovenRing(
-            snakes: solids(<double>[100], <Color>[cBlue]),
+          WovenRingChart(
+            segments: solids(<double>[100], <Color>[cBlue]),
             style: style,
-            intro: WovenRingIntro.none,
+            animation: WovenRingAnimation.none,
           ),
         );
         final Ring r = Ring(
           side: side,
-          bandFraction: style.resolvedBandFraction,
+          thicknessFraction: style.resolvedThicknessFraction,
           overlapFraction: style.resolvedOverlapFraction,
           startAngle: style.resolvedStartAngle,
           clockwise: true,
@@ -1727,8 +1758,8 @@ void main() {
           expect(pixel.a, 255, reason: '$single gap at angle $angle');
           if (channelDistance(pixel, rgbaOf(cBlue)) > 6) offColour++;
         }
-        // Jointed draws one thin surface-coloured seam mark; smooth draws none.
-        if (single == WovenSingleSnakeStyle.smooth) {
+        // Jointed draws one thin surfaceColor-coloured seam mark; smooth draws none.
+        if (single == WovenSingleSegmentStyle.smooth) {
           expect(offColour, 0, reason: 'smooth single must be one flat ring');
         } else {
           expect(
@@ -1739,7 +1770,7 @@ void main() {
           expect(
             offColour,
             lessThan(120),
-            reason: 'the self-joint must be a hairline, not a band',
+            reason: 'the self-joint must be a hairline, not a thickness',
           );
         }
       }
@@ -1749,35 +1780,35 @@ void main() {
       WidgetTester tester,
     ) async {
       // One value has no boundary to show, so the default shows none. The
-      // self-joint is the only edge in this component that no fill produced,
-      // and a surface-coloured line on a ring the caller asked to be
+      // self-joint is the only edge in this chart that no fill produced,
+      // and a surfaceColor-coloured line on a ring the caller asked to be
       // borderless reads as damage rather than as a lap; jointed is opt-in.
       expect(
-        const WovenRingStyle().singleSnakeStyle,
-        WovenSingleSnakeStyle.smooth,
+        const WovenRingStyle().singleSegmentStyle,
+        WovenSingleSegmentStyle.smooth,
       );
       const WovenRingStyle style = WovenRingStyle();
       final Raster raster = await render(
         tester,
-        WovenRing(
-          snakes: solids(<double>[100], <Color>[cBlue]),
+        WovenRingChart(
+          segments: solids(<double>[100], <Color>[cBlue]),
           style: style,
-          intro: WovenRingIntro.none,
+          animation: WovenRingAnimation.none,
         ),
       );
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
       );
-      // Every radius across the band, all the way round: no mark anywhere,
+      // Every radius across the thickness, all the way round: no mark anywhere,
       // not just on the centreline the jointed check walks.
       for (var s = 0; s < 1440; s++) {
         final double angle = s * 2 * math.pi / 1440;
         for (var k = 1; k < 8; k++) {
-          final double radius = r.inner + r.band * k / 8;
+          final double radius = r.inner + r.thickness * k / 8;
           final Rgba pixel = raster.atPoint(r.at(radius, angle));
           expect(
             channelDistance(pixel, rgbaOf(cBlue)),
@@ -1796,15 +1827,15 @@ void main() {
     ) async {
       final Raster raster = await render(
         tester,
-        WovenRing(
-          snakes: solids(<double>[0, 0, 0], tenColors),
-          intro: WovenRingIntro.none,
+        WovenRingChart(
+          segments: solids(<double>[0, 0, 0], tenColors),
+          animation: WovenRingAnimation.none,
         ),
       );
       const WovenRingStyle style = WovenRingStyle();
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
@@ -1817,7 +1848,7 @@ void main() {
           expect(
             channelDistance(pixel, rgbaOf(c)),
             greaterThan(20),
-            reason: 'zero-valued snake still painted at $angle',
+            reason: 'zero-valued segment still painted at $angle',
           );
         }
       }
@@ -1825,23 +1856,23 @@ void main() {
   });
 
   // =========================================================================
-  // Section E - intro animation. The endpoint identity check is the one that
+  // Section E - animation. The endpoint identity check is the one that
   // catches a seam that swaps on the final frame.
   // =========================================================================
 
-  group('E. intro animation', () {
+  group('E. animation', () {
     for (final bool clockwise in <bool>[true, false]) {
-      for (final WovenRingIntro intro in <WovenRingIntro>[
-        WovenRingIntro.relay,
-        WovenRingIntro.bloom,
+      for (final WovenRingAnimation animation in <WovenRingAnimation>[
+        WovenRingAnimation.sweep,
+        WovenRingAnimation.grow,
       ]) {
-        final String label = '${intro.name} ${clockwise ? 'CW' : 'CCW'}';
+        final String label = '${animation.name} ${clockwise ? 'CW' : 'CCW'}';
 
         testWidgets('E1 $label settles onto the exact static frame', (
           WidgetTester tester,
         ) async {
           final WovenRingStyle style = WovenRingStyle(clockwise: clockwise);
-          final List<WovenSnake> snakes = solids(<double>[
+          final List<WovenSegment> segments = solids(<double>[
             37,
             19,
             29,
@@ -1851,7 +1882,11 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(snakes: snakes, style: style, intro: intro),
+            WovenRingChart(
+              segments: segments,
+              style: style,
+              animation: animation,
+            ),
           );
           await tester.pump(const Duration(milliseconds: 2500));
           final Raster settled = await capture(tester, key);
@@ -1860,7 +1895,11 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(snakes: snakes, style: style, intro: WovenRingIntro.none),
+            WovenRingChart(
+              segments: segments,
+              style: style,
+              animation: WovenRingAnimation.none,
+            ),
           );
           final Raster reference = await capture(tester, key);
           expect(
@@ -1878,7 +1917,7 @@ void main() {
           final WovenRingStyle style = WovenRingStyle(clockwise: clockwise);
           final Ring r = Ring(
             side: side,
-            bandFraction: style.resolvedBandFraction,
+            thicknessFraction: style.resolvedThicknessFraction,
             overlapFraction: style.resolvedOverlapFraction,
             startAngle: style.resolvedStartAngle,
             clockwise: clockwise,
@@ -1887,10 +1926,10 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(
-              snakes: solids(<double>[37, 19, 29, 15], tenColors),
+            WovenRingChart(
+              segments: solids(<double>[37, 19, 29, 15], tenColors),
               style: style,
-              intro: intro,
+              animation: animation,
             ),
           );
           for (var frame = 0; frame < 40; frame++) {
@@ -1915,21 +1954,21 @@ void main() {
     }
 
     // Sampled densely and right through completion, in both directions. The
-    // approach to the seam is the hardest part of the whole component, so it is
+    // approach to the seam is the hardest part of the whole chart, so it is
     // deliberately not excluded.
     for (final bool clockwise in <bool>[true, false]) {
-      for (final WovenRingIntro intro in <WovenRingIntro>[
-        WovenRingIntro.relay,
-        WovenRingIntro.bloom,
+      for (final WovenRingAnimation animation in <WovenRingAnimation>[
+        WovenRingAnimation.sweep,
+        WovenRingAnimation.grow,
       ]) {
-        final String label = '${intro.name} ${clockwise ? 'CW' : 'CCW'}';
+        final String label = '${animation.name} ${clockwise ? 'CW' : 'CCW'}';
         testWidgets('E3 the growing head is a true circular cap ($label)', (
           WidgetTester tester,
         ) async {
           final WovenRingStyle style = WovenRingStyle(clockwise: clockwise);
           final Ring r = Ring(
             side: side,
-            bandFraction: style.resolvedBandFraction,
+            thicknessFraction: style.resolvedThicknessFraction,
             overlapFraction: style.resolvedOverlapFraction,
             startAngle: style.resolvedStartAngle,
             clockwise: clockwise,
@@ -1938,10 +1977,10 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(
-              snakes: solids(<double>[37, 19, 29, 15], tenColors),
+            WovenRingChart(
+              segments: solids(<double>[37, 19, 29, 15], tenColors),
               style: style,
-              intro: intro,
+              animation: animation,
             ),
           );
           final List<String> violations = <String>[];
@@ -1960,16 +1999,16 @@ void main() {
     testWidgets('E4 replay restarts and settles on the same static frame', (
       WidgetTester tester,
     ) async {
-      final WovenRingController controller = WovenRingController();
+      final WovenRingChartController controller = WovenRingChartController();
       addTearDown(controller.dispose);
       final GlobalKey key = GlobalKey();
-      final List<WovenSnake> snakes = solids(<double>[37, 19, 29, 15]);
+      final List<WovenSegment> segments = solids(<double>[37, 19, 29, 15]);
       await pump(
         tester,
         key,
-        WovenRing(
-          snakes: snakes,
-          intro: WovenRingIntro.relay,
+        WovenRingChart(
+          segments: segments,
+          animation: WovenRingAnimation.sweep,
           controller: controller,
         ),
       );
@@ -1983,7 +2022,7 @@ void main() {
         expect(
           pixelDifference(mid, settled),
           greaterThan(0),
-          reason: 'replay $replay did not restart the intro',
+          reason: 'replay $replay did not restart the animation',
         );
         await tester.pump(const Duration(milliseconds: 2000));
         expect(
@@ -1996,30 +2035,30 @@ void main() {
   });
 
   group('E5 borders never get buried', () {
-    for (final WovenRingIntro intro in <WovenRingIntro>[
-      WovenRingIntro.relay,
-      WovenRingIntro.bloom,
+    for (final WovenRingAnimation animation in <WovenRingAnimation>[
+      WovenRingAnimation.sweep,
+      WovenRingAnimation.grow,
     ]) {
       for (final bool clockwise in <bool>[true, false]) {
-        for (final WovenSingleSnakeStyle single
-            in WovenSingleSnakeStyle.values) {
+        for (final WovenSingleSegmentStyle single
+            in WovenSingleSegmentStyle.values) {
           final String label =
-              '${intro.name} ${clockwise ? 'CW' : 'CCW'} ${single.name}';
-          testWidgets('a self-lapping snake buries no border ($label)', (
+              '${animation.name} ${clockwise ? 'CW' : 'CCW'} ${single.name}';
+          testWidgets('a self-lapping segment buries no border ($label)', (
             WidgetTester tester,
           ) async {
             final WovenRingStyle style = WovenRingStyle(
-              bandFraction: 0.15,
+              thicknessFraction: 0.15,
               overlapFraction: 0.30,
               clockwise: clockwise,
-              singleSnakeStyle: single,
+              singleSegmentStyle: single,
             );
             // An explicit border colour that no fill and no joint mark uses, so
             // anything found is unambiguously a border stroke.
             const Color ink = Color(0xFF000000);
             final Ring r = Ring(
               side: side,
-              bandFraction: style.resolvedBandFraction,
+              thicknessFraction: style.resolvedThicknessFraction,
               overlapFraction: style.resolvedOverlapFraction,
               startAngle: style.resolvedStartAngle,
               clockwise: clockwise,
@@ -2028,16 +2067,16 @@ void main() {
             await pump(
               tester,
               key,
-              WovenRing(
-                snakes: <WovenSnake>[
-                  WovenSnake(
+              WovenRingChart(
+                segments: <WovenSegment>[
+                  WovenSegment(
                     value: 100,
                     fill: WovenFill.shaded(cPurple, step: 0.04),
                     border: const WovenBorder(color: ink),
                   ),
                 ],
                 style: style,
-                intro: intro,
+                animation: animation,
               ),
             );
             final List<String> violations = <String>[];
@@ -2109,7 +2148,7 @@ void main() {
           final WovenRingStyle style = WovenRingStyle(clockwise: clockwise);
           final Ring r = Ring(
             side: side,
-            bandFraction: style.resolvedBandFraction,
+            thicknessFraction: style.resolvedThicknessFraction,
             overlapFraction: style.resolvedOverlapFraction,
             startAngle: style.resolvedStartAngle,
             clockwise: clockwise,
@@ -2118,23 +2157,23 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(
-              snakes: solids(from, tenColors),
+            WovenRingChart(
+              segments: solids(from, tenColors),
               style: style,
-              intro: WovenRingIntro.none,
+              animation: WovenRingAnimation.none,
             ),
           );
           await pump(
             tester,
             key,
-            WovenRing(
-              snakes: solids(to, tenColors),
+            WovenRingChart(
+              segments: solids(to, tenColors),
               style: style,
-              intro: WovenRingIntro.none,
+              animation: WovenRingAnimation.none,
             ),
           );
 
-          // Every frame keeps the band covered: no background flash and no
+          // Every frame keeps the thickness covered: no background flash and no
           // hole opening up while the geometry rearranges. A ring that is
           // fading to or from the empty state is only ever as opaque as the
           // neutral empty track itself, which is translucent by design.
@@ -2156,7 +2195,7 @@ void main() {
                   raster.atPoint(r.at(radius, angle)).a,
                   greaterThanOrEqualTo(minimumAlpha),
                   reason:
-                      '$name frame $frame has a see-through band pixel at '
+                      '$name frame $frame has a see-through thickness pixel at '
                       'angle ${angle.toStringAsFixed(4)} r=$radius',
                 );
               }
@@ -2170,10 +2209,10 @@ void main() {
           await pump(
             tester,
             key,
-            WovenRing(
-              snakes: solids(to, tenColors),
+            WovenRingChart(
+              segments: solids(to, tenColors),
               style: style,
-              intro: WovenRingIntro.none,
+              animation: WovenRingAnimation.none,
             ),
           );
           expect(
@@ -2190,10 +2229,10 @@ void main() {
     // holds through a transition, and it fails the moment a tail peeks past a
     // successor head or the seam changes owner.
     final List<
-      (String, WovenRingStyle, List<WovenSnake> Function(List<double>))
+      (String, WovenRingStyle, List<WovenSegment> Function(List<double>))
     >
     styles =
-        <(String, WovenRingStyle, List<WovenSnake> Function(List<double>))>[
+        <(String, WovenRingStyle, List<WovenSegment> Function(List<double>))>[
           (
             'flat',
             const WovenRingStyle(),
@@ -2202,9 +2241,9 @@ void main() {
           (
             'gradient',
             const WovenRingStyle(),
-            (List<double> v) => <WovenSnake>[
+            (List<double> v) => <WovenSegment>[
               for (var i = 0; i < v.length; i++)
-                WovenSnake(
+                WovenSegment(
                   value: v[i],
                   fill: WovenFill.shaded(tenColors[i], step: 0.16),
                 ),
@@ -2213,9 +2252,9 @@ void main() {
           (
             'bordered',
             const WovenRingStyle(),
-            (List<double> v) => <WovenSnake>[
+            (List<double> v) => <WovenSegment>[
               for (var i = 0; i < v.length; i++)
-                WovenSnake(
+                WovenSegment(
                   value: v[i],
                   fill: WovenFill.solid(tenColors[i]),
                   border: const WovenBorder(),
@@ -2223,8 +2262,8 @@ void main() {
             ],
           ),
           (
-            'lift',
-            const WovenRingStyle(lift: WovenLift()),
+            'shadow',
+            const WovenRingStyle(shadow: WovenShadow()),
             (List<double> v) => solids(v, tenColors),
           ),
         ];
@@ -2232,7 +2271,7 @@ void main() {
     for (final (
           String styleName,
           WovenRingStyle style,
-          List<WovenSnake> Function(List<double>) build,
+          List<WovenSegment> Function(List<double>) build,
         )
         in styles) {
       for (final bool clockwise in <bool>[true, false]) {
@@ -2245,35 +2284,35 @@ void main() {
             );
             final Ring r = Ring(
               side: side,
-              bandFraction: resolved.resolvedBandFraction,
+              thicknessFraction: resolved.resolvedThicknessFraction,
               overlapFraction: resolved.resolvedOverlapFraction,
               startAngle: resolved.resolvedStartAngle,
               clockwise: clockwise,
-              lift: resolved.lift,
+              shadow: resolved.shadow,
             );
-            final double shadow = resolved.lift == null
+            final double shadow = resolved.shadow == null
                 ? 0.0
-                : resolved.lift!.color.a;
+                : resolved.shadow!.color.a;
             final List<WovenFill> fills = <WovenFill>[
-              for (final WovenSnake s in build(<double>[1, 1, 1, 1])) s.fill,
+              for (final WovenSegment s in build(<double>[1, 1, 1, 1])) s.fill,
             ];
             final GlobalKey key = GlobalKey();
             await pump(
               tester,
               key,
-              WovenRing(
-                snakes: build(<double>[25, 25, 25, 25]),
+              WovenRingChart(
+                segments: build(<double>[25, 25, 25, 25]),
                 style: resolved,
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
               ),
             );
             await pump(
               tester,
               key,
-              WovenRing(
-                snakes: build(<double>[9, 44, 12, 35]),
+              WovenRingChart(
+                segments: build(<double>[9, 44, 12, 35]),
                 style: resolved,
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
               ),
             );
             final List<String> violations = <String>[];
@@ -2316,15 +2355,15 @@ void main() {
       await pump(
         tester,
         key,
-        WovenRing(
-          snakes: solids(sequence.first, tenColors),
-          intro: WovenRingIntro.none,
+        WovenRingChart(
+          segments: solids(sequence.first, tenColors),
+          animation: WovenRingAnimation.none,
         ),
       );
       const WovenRingStyle style = WovenRingStyle();
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
@@ -2334,9 +2373,9 @@ void main() {
         await pump(
           tester,
           key,
-          WovenRing(
-            snakes: solids(sequence[step], tenColors),
-            intro: WovenRingIntro.none,
+          WovenRingChart(
+            segments: solids(sequence[step], tenColors),
+            animation: WovenRingAnimation.none,
           ),
         );
         // The very first frame after a retarget must be the frame that was
@@ -2368,42 +2407,43 @@ void main() {
 
   // =========================================================================
   // Section H - gradients. A gradient is the only fill that makes the joint
-  // edge visible on a single self-lapping snake, so it is also the only one
+  // edge visible on a single self-lapping segment, so it is also the only one
   // that can expose a seam that is not a cap.
   // =========================================================================
 
   group('H. gradients', () {
     for (final bool clockwise in <bool>[true, false]) {
-      for (final WovenSingleSnakeStyle single in WovenSingleSnakeStyle.values) {
+      for (final WovenSingleSegmentStyle single
+          in WovenSingleSegmentStyle.values) {
         final String label = '${single.name} ${clockwise ? 'CW' : 'CCW'}';
         testWidgets(
-          'H1 a self-lapping snake joins with a cap, not a radial seam ($label)',
+          'H1 a self-lapping segment joins with a cap, not a radial seam ($label)',
           (WidgetTester tester) async {
             final WovenRingStyle style = WovenRingStyle(
-              bandFraction: 0.15,
+              thicknessFraction: 0.15,
               overlapFraction: 0.45,
               startAngle: 45 * math.pi / 180,
               clockwise: clockwise,
-              singleSnakeStyle: single,
+              singleSegmentStyle: single,
             );
             final WovenFill fill = WovenFill.shaded(cPurple, step: 0.20);
             final Raster raster = await render(
               tester,
-              WovenRing(
-                snakes: <WovenSnake>[WovenSnake(value: 100, fill: fill)],
+              WovenRingChart(
+                segments: <WovenSegment>[WovenSegment(value: 100, fill: fill)],
                 style: style,
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
               ),
             );
             final Ring r = Ring(
               side: side,
-              bandFraction: style.resolvedBandFraction,
+              thicknessFraction: style.resolvedThicknessFraction,
               overlapFraction: style.resolvedOverlapFraction,
               startAngle: style.resolvedStartAngle,
               clockwise: clockwise,
             );
-            // The single snake's head sits one overlap depth behind the data
-            // boundary, exactly like every other snake's head.
+            // The single segment's head sits one overlap depth behind the data
+            // boundary, exactly like every other segment's head.
             final double head = r.startAngle - r.dir * r.jointLag;
             final List<String> violations = selfJointEdgeViolations(
               raster,
@@ -2434,18 +2474,18 @@ void main() {
           ];
           final Raster raster = await render(
             tester,
-            WovenRing(
-              snakes: <WovenSnake>[
+            WovenRingChart(
+              segments: <WovenSegment>[
                 for (var i = 0; i < 4; i++)
-                  WovenSnake(value: 25, fill: fills[i]),
+                  WovenSegment(value: 25, fill: fills[i]),
               ],
               style: style,
-              intro: WovenRingIntro.none,
+              animation: WovenRingAnimation.none,
             ),
           );
           final Ring r = Ring(
             side: side,
-            bandFraction: style.resolvedBandFraction,
+            thicknessFraction: style.resolvedThicknessFraction,
             overlapFraction: style.resolvedOverlapFraction,
             startAngle: style.resolvedStartAngle,
             clockwise: clockwise,
@@ -2474,14 +2514,14 @@ void main() {
               channelDistance(atHead, near),
               lessThan(channelDistance(atHead, far)),
               reason:
-                  'snake $i shows the wrong end of its gradient at the head '
+                  'segment $i shows the wrong end of its gradient at the head '
                   '(pixel $atHead, expected nearer $near than $far)',
             );
             expect(
               channelDistance(atTail, far),
               lessThan(channelDistance(atTail, near)),
               reason:
-                  'snake $i shows the wrong end of its gradient at the tail '
+                  'segment $i shows the wrong end of its gradient at the tail '
                   '(pixel $atTail, expected nearer $far than $near)',
             );
           }
@@ -2489,27 +2529,27 @@ void main() {
       }
     }
 
-    testWidgets('H3 across-band gradients shade radially, not angularly', (
+    testWidgets('H3 across-thickness gradients shade radially, not angularly', (
       WidgetTester tester,
     ) async {
-      // Smooth, so the jointed style's surface-coloured hairline does not
+      // Smooth, so the jointed style's surfaceColor-coloured hairline does not
       // count as angular variation. H1 covers the joint itself.
       const WovenRingStyle style = WovenRingStyle(
-        gradientAxis: WovenGradientAxis.acrossBand,
-        singleSnakeStyle: WovenSingleSnakeStyle.smooth,
+        gradientAxis: WovenGradientAxis.acrossThickness,
+        singleSegmentStyle: WovenSingleSegmentStyle.smooth,
       );
       final WovenFill fill = WovenFill.shaded(cPurple, step: 0.20);
       final Raster raster = await render(
         tester,
-        WovenRing(
-          snakes: <WovenSnake>[WovenSnake(value: 100, fill: fill)],
+        WovenRingChart(
+          segments: <WovenSegment>[WovenSegment(value: 100, fill: fill)],
           style: style,
-          intro: WovenRingIntro.none,
+          animation: WovenRingAnimation.none,
         ),
       );
       final Ring r = Ring(
         side: side,
-        bandFraction: style.resolvedBandFraction,
+        thicknessFraction: style.resolvedThicknessFraction,
         overlapFraction: style.resolvedOverlapFraction,
         startAngle: style.resolvedStartAngle,
         clockwise: true,
@@ -2517,9 +2557,9 @@ void main() {
       // A tube has no angular variation at all: the same radius is the same
       // colour the whole way round.
       for (final double radius in <double>[
-        r.track - r.band * 0.3,
+        r.track - r.thickness * 0.3,
         r.track,
-        r.track + r.band * 0.3,
+        r.track + r.thickness * 0.3,
       ]) {
         final Rgba reference = raster.atPoint(r.at(radius, 0));
         for (var s = 0; s < 720; s++) {
@@ -2528,19 +2568,19 @@ void main() {
             channelDistance(raster.atPoint(r.at(radius, angle)), reference),
             lessThanOrEqualTo(3),
             reason:
-                'across-band shading varies with angle at r=$radius '
+                'across-thickness shading varies with angle at r=$radius '
                 'angle=$angle',
           );
         }
       }
-      // And it does vary across the band.
+      // And it does vary across the thickness.
       expect(
         channelDistance(
           raster.atPoint(r.at(r.inner + 3, 0)),
           raster.atPoint(r.at(r.outer - 3, 0)),
         ),
         greaterThan(20),
-        reason: 'across-band shading is flat',
+        reason: 'across-thickness shading is flat',
       );
     });
   });
@@ -2549,9 +2589,9 @@ void main() {
     testWidgets('G1 every layout constraint is safe', (
       WidgetTester tester,
     ) async {
-      final Widget ring = WovenRing(
-        snakes: solids(<double>[37, 19, 29, 15], tenColors),
-        intro: WovenRingIntro.none,
+      final Widget ring = WovenRingChart(
+        segments: solids(<double>[37, 19, 29, 15], tenColors),
+        animation: WovenRingAnimation.none,
         center: const Text('x'),
       );
       // Each entry hands the ring a genuinely different constraint shape.
@@ -2609,9 +2649,9 @@ void main() {
                   key: key,
                   child: SizedBox.square(
                     dimension: side,
-                    child: WovenRing(
-                      snakes: solids(values, tenColors),
-                      intro: WovenRingIntro.relay,
+                    child: WovenRingChart(
+                      segments: solids(values, tenColors),
+                      animation: WovenRingAnimation.sweep,
                     ),
                   ),
                 ),
@@ -2628,7 +2668,7 @@ void main() {
       expect(
         pixelDifference(immediate, await capture(tester, key)),
         0,
-        reason: 'reduced motion still animated the intro',
+        reason: 'reduced motion still animated the animation',
       );
 
       await pumpReduced(<double>[10, 10, 40, 40]);
@@ -2646,9 +2686,9 @@ void main() {
       WidgetTester tester,
     ) async {
       for (final Widget ring in <Widget>[
-        const WovenRing.loading(),
-        const WovenRing.empty(),
-        WovenRing(snakes: solids(<double>[1, 2, 3], tenColors)),
+        const WovenRingChart.loading(),
+        const WovenRingChart.empty(),
+        WovenRingChart(segments: solids(<double>[1, 2, 3], tenColors)),
       ]) {
         await tester.pumpWidget(
           Directionality(
@@ -2675,20 +2715,20 @@ void main() {
           child: Center(
             child: SizedBox.square(
               dimension: side,
-              child: WovenRing(
-                snakes: <WovenSnake>[
-                  WovenSnake(
+              child: WovenRingChart(
+                segments: <WovenSegment>[
+                  WovenSegment(
                     value: 60,
                     fill: WovenFill.solid(cRed),
                     semanticLabel: 'Red sixty',
                   ),
-                  WovenSnake(
+                  WovenSegment(
                     value: 40,
                     fill: WovenFill.solid(cGreen),
                     semanticLabel: 'Green forty',
                   ),
                 ],
-                intro: WovenRingIntro.none,
+                animation: WovenRingAnimation.none,
                 semanticValue: '2 entries',
               ),
             ),
@@ -2699,31 +2739,31 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('G4b per-snake labels do not silence the centre', (
+    testWidgets('G4b per-segment labels do not silence the centre', (
       WidgetTester tester,
     ) async {
       final SemanticsHandle handle = tester.ensureSemantics();
-      Future<void> pumpRing({required bool labelSnakes}) async {
+      Future<void> pumpRing({required bool labelSegments}) async {
         await tester.pumpWidget(
           Directionality(
             textDirection: TextDirection.ltr,
             child: Center(
               child: SizedBox.square(
                 dimension: side,
-                child: WovenRing(
-                  snakes: <WovenSnake>[
-                    WovenSnake(
+                child: WovenRingChart(
+                  segments: <WovenSegment>[
+                    WovenSegment(
                       value: 60,
                       fill: const WovenFill.solid(cRed),
-                      semanticLabel: labelSnakes ? 'Red sixty' : null,
+                      semanticLabel: labelSegments ? 'Red sixty' : null,
                     ),
-                    WovenSnake(
+                    WovenSegment(
                       value: 40,
                       fill: const WovenFill.solid(cGreen),
-                      semanticLabel: labelSnakes ? 'Green forty' : null,
+                      semanticLabel: labelSegments ? 'Green forty' : null,
                     ),
                   ],
-                  intro: WovenRingIntro.none,
+                  animation: WovenRingAnimation.none,
                   center: const Text('60 percent'),
                 ),
               ),
@@ -2733,17 +2773,17 @@ void main() {
       }
 
       // Baseline: with no labels at all the centre is readable.
-      await pumpRing(labelSnakes: false);
+      await pumpRing(labelSegments: false);
       expect(find.bySemanticsLabel('60 percent'), findsOneWidget);
 
       // Describing the segments must not take the total away. The ring's own
       // annotation merges with the centre, so the total arrives as part of that
       // node's label rather than as a node of its own.
-      await pumpRing(labelSnakes: true);
+      await pumpRing(labelSegments: true);
       expect(
         find.bySemanticsLabel(RegExp('60 percent')),
         findsOneWidget,
-        reason: 'adding per-snake labels hid the centre from assistive tech',
+        reason: 'adding per-segment labels hid the centre from assistive tech',
       );
       expect(
         find.bySemanticsLabel(RegExp('Red sixty, Green forty')),
@@ -2758,9 +2798,9 @@ void main() {
           child: Center(
             child: SizedBox.square(
               dimension: side,
-              child: WovenRing(
-                snakes: solids(<double>[60, 40], tenColors),
-                intro: WovenRingIntro.none,
+              child: WovenRingChart(
+                segments: solids(<double>[60, 40], tenColors),
+                animation: WovenRingAnimation.none,
                 semanticLabel: 'Allocation',
                 center: const Text('60 percent'),
               ),
@@ -2777,20 +2817,20 @@ void main() {
       WidgetTester tester,
     ) async {
       final GlobalKey key = GlobalKey();
-      final List<WovenSnake> shared = <WovenSnake>[
+      final List<WovenSegment> shared = <WovenSegment>[
         ...solids(<double>[25, 25, 25, 25], tenColors),
       ];
       await pump(
         tester,
         key,
-        WovenRing(snakes: shared, intro: WovenRingIntro.none),
+        WovenRingChart(segments: shared, animation: WovenRingAnimation.none),
       );
       final Raster before = await capture(tester, key);
-      shared[0] = const WovenSnake(value: 70, fill: WovenFill.solid(cRed));
+      shared[0] = const WovenSegment(value: 70, fill: WovenFill.solid(cRed));
       await pump(
         tester,
         key,
-        WovenRing(snakes: shared, intro: WovenRingIntro.none),
+        WovenRingChart(segments: shared, animation: WovenRingAnimation.none),
       );
       await tester.pump(const Duration(milliseconds: 900));
       expect(
@@ -2837,7 +2877,7 @@ int pixelDifference(Raster a, Raster b) {
 
 /// Every edge of a growing ring is a cap: a circle of radius `cap` centred one
 /// cap back along the centreline. This checks *both* ends of *every* covered
-/// run, so it holds for the relay's single travelling head and for bloom's
+/// run, so it holds for the sweep's single travelling head and for grow's
 /// several simultaneous ones, in either direction.
 List<String> leadingEdgeViolations(Raster raster, Ring r, String label) {
   const int samples = 2880;
@@ -2867,7 +2907,7 @@ List<String> leadingEdgeViolations(Raster raster, Ring r, String label) {
   // ring has closed and there are no free ends left.
   if (count < 200 || count > samples - 200) return const <String>[];
 
-  // Every index where coverage changes is a free end of some snake.
+  // Every index where coverage changes is a free end of some segment.
   final List<(int, bool)> edges = <(int, bool)>[
     for (var s = 0; s < samples; s++)
       if (covered[s] != covered[(s - 1 + samples) % samples]) (s, covered[s]),
@@ -2889,7 +2929,8 @@ List<String> leadingEdgeViolations(Raster raster, Ring r, String label) {
 
     var measured = 0;
     for (var step = 0; step <= 12; step++) {
-      final double radius = r.track - r.band * 0.3 + r.band * 0.6 * step / 12;
+      final double radius =
+          r.track - r.thickness * 0.3 + r.thickness * 0.6 * step / 12;
       for (var k = 0; k <= 260; k++) {
         final double angle = edgeAngle + into * (r.capHalf * 1.4) * (k / 260);
         final Offset p = r.at(radius, angle);
@@ -2914,9 +2955,9 @@ List<String> leadingEdgeViolations(Raster raster, Ring r, String label) {
   return violations;
 }
 
-/// The one visible edge on a snake that laps its own tail must be the head's
+/// The one visible edge on a segment that laps its own tail must be the head's
 /// cap circle, and there must be no other. A sweep gradient that simply wraps
-/// puts a straight radial line here instead, which is the shape this component
+/// puts a straight radial line here instead, which is the shape this chart
 /// promises never to show; checking only that *an* edge sits on the cap circle
 /// is not enough, because a joint hairline sits there too and would mask it.
 List<String> selfJointEdgeViolations(
@@ -2931,7 +2972,7 @@ List<String> selfJointEdgeViolations(
   var worstStray = 0;
   for (var step = 0; step <= radialSteps; step++) {
     final double radius =
-        r.track - r.band * 0.35 + r.band * 0.70 * step / radialSteps;
+        r.track - r.thickness * 0.35 + r.thickness * 0.70 * step / radialSteps;
     // Where the cap circle crosses this radius, from the cosine rule.
     final double cosDelta =
         (radius * radius + r.track * r.track - r.cap * r.cap) /
@@ -2997,7 +3038,7 @@ List<String> selfJointEdgeViolations(
 /// A border is a hairline on the silhouette. Every border pixel must therefore
 /// have background within a stroke width or two of it. One that is walled in by
 /// fill on all sides is a stroke drawn along a buried edge, which is what a
-/// self-overlapping snake produces if its traced outline is stroked as traced.
+/// self-overlapping segment produces if its traced outline is stroked as traced.
 List<String> buriedBorderViolations(
   Raster raster,
   Ring r,
@@ -3007,12 +3048,12 @@ List<String> buriedBorderViolations(
   final Rgba target = rgbaOf(borderColor);
   // The stroke is drawn at double width and clipped to the silhouette, so the
   // visible line is one width thick and hugs the edge from the inside.
-  final double reach = r.band * 0.015 + 3.0;
+  final double reach = r.thickness * 0.015 + 3.0;
   final List<String> violations = <String>[];
   for (var s = 0; s < 720; s++) {
     final double angle = s * 2 * math.pi / 720;
     for (var step = 0; step <= 30; step++) {
-      final double radius = r.inner + r.band * step / 30;
+      final double radius = r.inner + r.thickness * step / 30;
       final Offset p = r.at(radius, angle);
       final Rgba pixel = raster.atPoint(p);
       if (pixel.a != 255) continue;

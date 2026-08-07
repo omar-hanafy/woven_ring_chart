@@ -3,83 +3,52 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0-dev.5] - 2026-08-06
+## [1.0.0-dev.6] - 2026-08-07
 
-### Fixed
-
-- A hyphenated word in the README was split across a source line, so the
-  rendered page read "Counter- clockwise".
-
-## [1.0.0-dev.4] - 2026-08-06
-
-### Fixed
-
-- The README's images are pinned to the commit that contains them instead of
-  to the branch. pub.dev proxies external images and caches them under a key
-  that includes the URL and a date bucket, so a branch URL kept serving the
-  previous version of a picture after the file behind it changed. Pinning also
-  means a published version's README shows that version's pictures rather than
-  whatever is on the branch later. The links to the test matrix and the licence
-  still track the branch, so they stay current.
-
-## [1.0.0-dev.3] - 2026-08-06
-
-### Fixed
-
-- The README animation and the screenshot are rendered against the ring's
-  surface colour again. The capture boundary sat inside the coloured
-  background rather than around it, so both came out transparent. A GIF has
-  one bit of transparency, which cut every antialiased edge into a hard
-  stair-step; the animation is now smooth, and smaller for it. It also makes
-  the pictures honest, since a border with no colour of its own paints in the
-  surface colour and only reads correctly against that surface.
-
-## [1.0.0-dev.2] - 2026-08-06
-
-### Fixed
-
-- The README's images and links now point at absolute URLs. pub.dev does not
-  resolve relative paths in a README: it drops the image and leaves the alt
-  text, so on 1.0.0-dev.1 the animation, the screenshot, and the links to the
-  test matrix and the licence were all missing from the package page.
-
-## [1.0.0-dev.1] - 2026-08-06
-
-First prerelease. The API is complete and the suite is green; the dev
-line runs until the release is proven, and 1.0.0 follows unchanged unless
-something turns up.
+Initial release.
 
 ### Added
 
-- `WovenRing`, a doughnut chart whose segments lap over one another in one
+- `WovenRingChart`, a doughnut chart whose segments lap over one another in one
   consistent direction. Every boundary between two colours is the backward
   semicircle of a round cap, including the seam where the last segment closes
-  onto the first.
-- `WovenRing.empty` and `WovenRing.loading`, both the same size and band width
-  as a ring with data, so a screen does not reflow when the data arrives.
-- `WovenRingStyle`: band width, overlap depth, start angle, direction, gradient
-  axis and direction, surface colour, an optional head shadow, and the two
-  policies below. Every measurement is a ratio of the outer diameter, so one
-  style renders correctly at any size.
-- `WovenSnake` with `WovenFill` (solid, explicit gradient, or `WovenFill.shaded`
-  from a single colour) and an optional `WovenBorder`. Borders are clipped
-  inside the snake, so a bordered segment is never fatter than its neighbours
+  onto the first. The chart is square and centres itself in whatever box it is
+  given.
+- `WovenRingChart.empty` and `WovenRingChart.loading`, both the same diameter
+  and thickness as a chart with data, so a screen does not reflow when the data
+  arrives.
+- `WovenSegment`, one coloured piece of the ring, carrying a value in any unit,
+  a fill, an optional border, an optional accessibility label, and an opacity.
+  Values are normalized against each other and their order is never changed.
+- `WovenFill`, solid, an explicit gradient, or `WovenFill.shaded` derived from a
+  single colour, and `WovenBorder`, an optional hairline. Borders are clipped
+  inside the segment, so a bordered segment is never fatter than its neighbours
   and the ring's outer edge stays a circle.
-- `WovenMinimumPolicy`, choosing whether a value too small to draw is inflated
-  to one band width of arc and the rest rescaled, or allowed to vanish under its
-  neighbour with the proportions left truthful.
-- `WovenSingleSnakeStyle`, choosing whether a lone 100 percent value keeps a
-  visible self-joint. It renders as a plain continuous ring by default.
-- Two intros, `WovenRingIntro.relay` and `WovenRingIntro.bloom`, and
-  `WovenRingController.replay()` to run one again. Data changes animate in
-  place: segments stretch and shrink and colours crossfade, so the ring never
-  blinks. Retargeting mid-flight starts from the frame already on screen.
-- `MediaQuery.disableAnimations` support, completing intros and data changes
+- `WovenRingStyle`: thickness, overlap depth, start angle, direction, gradient
+  axis and direction, surface colour, an optional `WovenShadow` under every
+  segment head, and the two policies below. Every measurement is a fraction of
+  the outer diameter, so one style renders correctly at any size.
+- `WovenSmallValuePolicy`, choosing whether a value too small to draw is raised
+  to one ring-thickness of arc with the rest rescaled, or allowed to vanish
+  under its neighbour with the proportions left truthful.
+- `WovenSingleSegmentStyle`, choosing whether a lone value covering the whole
+  ring keeps a visible self-joint. It renders as a plain continuous ring by
+  default.
+- Two entrance animations, `WovenRingAnimation.sweep` and
+  `WovenRingAnimation.grow`, and `WovenRingChartController.replay()` to run one
+  again. Data changes animate in place: segments stretch and shrink and colours
+  crossfade, so the chart never blinks. Retargeting mid-flight starts from the
+  frame already on screen.
+- `highlightedIndex` and `highlightBorder`, giving one segment a border while
+  the others stay unbordered.
+- `MediaQuery.disableAnimations` support, completing entrances and data changes
   immediately.
-- Semantics: `semanticLabel` and `semanticValue` for the chart, or per-snake
+- Semantics: `semanticLabel` and `semanticValue` for the chart, or per-segment
   labels that are joined when no chart-level label is given. Labelling segments
-  does not remove the centre widget from the accessibility tree.
-- `WovenPalette`, the reference colours plus `WovenPalette.cycle`, which repeats
-  a palette without letting a colour touch itself across the seam.
-- `WovenRingGeometry` and `wovenFractions`, the geometry and normalization the
-  widget uses, exported so they can be tested or reused directly.
+  does not remove the centre widget from the accessibility tree, and the
+  loading chart announces itself as a live region.
+- `WovenPalette`, a reference set of colours plus `WovenPalette.cycle`, which
+  repeats a palette without letting a colour touch itself across the seam.
+- `WovenRingGeometry`, `WovenSegmentExtent`, and `wovenSegmentFractions`, the
+  geometry and normalization the chart uses, exported so they can be measured
+  against or reused directly.
