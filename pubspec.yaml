@@ -2,7 +2,7 @@ name: woven_ring_chart
 description: >
   A woven doughnut chart for Flutter. Segments lap over one another like
   shingles, so every boundary between two colours is a true semicircle.
-version: 1.0.1
+version: 1.0.2
 
 homepage: https://github.com/omar-hanafy/woven_ring_chart
 repository: https://github.com/omar-hanafy/woven_ring_chart

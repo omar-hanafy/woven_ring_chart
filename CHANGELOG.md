@@ -3,6 +3,14 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-08-07
+
+### Changed
+
+- `example/lib/main.dart` is the short getting-started example, which is what
+  pub.dev shows under Example. The showcase moved to
+  `example/lib/showcase.dart`.
+
 ## [1.0.1] - 2026-08-07
 
 ### Changed

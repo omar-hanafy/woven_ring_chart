@@ -1,82 +1,38 @@
-// The woven_ring_chart showcase.
+// The smallest thing that draws a woven ring.
 //
-//   cd example && flutter run
-//   cd example && flutter run -t lib/ten_segments.dart
+// This file is deliberately the whole of it. pub.dev renders it under the
+// Example tab, so it is the first code most people ever see of this package,
+// and it should be something you can read in one go and paste straight into an
+// app.
 //
-// One scrolling page, deployed to https://omar-hanafy.github.io/woven_ring_chart/
-// on every push to main that touches the package or this example.
+// The showcase - every option, side by side with the code that produces it -
+// is a separate entrypoint, and is what the live demo runs:
 //
-// Every section pairs a chart that is really running with the Dart that
-// produced it, because the thing a developer evaluating a package actually
-// needs is not a picture: it is the twelve lines that make the picture.
-//
-// The short getting-started snippet lives in example/README.md, which is what
-// pub.dev renders under its Example tab.
+//   flutter run -t lib/showcase.dart
+//   https://omar-hanafy.github.io/woven_ring_chart/
 import 'package:flutter/material.dart';
 
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
-import 'src/sections/accessibility.dart';
-import 'src/sections/animation.dart';
-import 'src/sections/colours.dart';
-import 'src/sections/fills.dart';
-import 'src/sections/footer.dart';
-import 'src/sections/hero.dart';
-import 'src/sections/playground.dart';
-import 'src/sections/quick_start.dart';
-import 'src/sections/states.dart';
-import 'src/showcase_theme.dart';
+void main() => runApp(const MyApp());
 
-void main() => runApp(const WovenRingChartDemoApp());
-
-class WovenRingChartDemoApp extends StatelessWidget {
-  const WovenRingChartDemoApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'woven_ring_chart',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: WovenPalette.purple,
-          surface: ShowcaseColors.page,
-        ),
-        scaffoldBackgroundColor: ShowcaseColors.page,
-        useMaterial3: true,
-      ),
-      home: const ShowcasePage(),
-    );
-  }
-}
-
-/// The whole showcase, top to bottom.
-///
-/// A [ListView] rather than a [SingleChildScrollView] on purpose: its children
-/// are only inflated when they come near the viewport, so each ring plays its
-/// entrance as you reach it instead of every ring on the page animating at
-/// once into an empty screen.
-class ShowcasePage extends StatelessWidget {
-  const ShowcasePage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Scrollbar(
-          child: ListView(
-            primary: true,
-            children: const <Widget>[
-              HeroSection(),
-              QuickStartSection(),
-              PlaygroundSection(),
-              FillsSection(),
-              AnimationSection(),
-              StatesSection(),
-              ColoursSection(),
-              AccessibilitySection(),
-              FooterSection(),
+      home: Scaffold(
+        body: Center(
+          child: WovenRingChart(
+            segments: <WovenSegment>[
+              WovenSegment.solid(37, WovenPalette.purple),
+              WovenSegment.solid(19, WovenPalette.green),
+              WovenSegment.solid(29, WovenPalette.amber),
+              WovenSegment.solid(15, WovenPalette.rose),
             ],
+            center: const Text('100'),
+            semanticLabel: 'Spending by category',
           ),
         ),
       ),

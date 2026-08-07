@@ -314,7 +314,8 @@ on that page is what is on `main`.
 
 ```sh
 cd example
-flutter run                            # the showcase
+flutter run                            # the getting-started snippet
+flutter run -t lib/showcase.dart       # the showcase, as deployed
 flutter run -t lib/ten_segments.dart   # ten segments, all animating
 ```
 

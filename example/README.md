@@ -1,7 +1,7 @@
 # woven_ring_chart example
 
-The smallest thing that draws a woven ring. Paste it into `lib/main.dart` and
-run.
+The smallest thing that draws a woven ring. This is `lib/main.dart` here, and
+it is the whole file.
 
 ```dart
 import 'package:flutter/material.dart';
@@ -43,21 +43,27 @@ settles at 240 logical pixels with nothing bounded on either side.
 
 ## Everything else
 
-**[The live demo](https://omar-hanafy.github.io/woven_ring_chart/)** is this
-directory, running in your browser. It is one page, and every section on it
-puts a chart that is really running next to the Dart that produced it: quick
-start, an interactive playground, fills and borders, animation, the empty and
-loading states, the palette, and accessibility.
+**[The live demo](https://omar-hanafy.github.io/woven_ring_chart/)** is
+`lib/showcase.dart` in this directory, running in your browser. It is one page,
+and every section on it puts a chart that is really running next to the Dart
+that produced it: quick start, an interactive playground, fills and borders,
+animation, the empty and loading states, the palette, and accessibility.
 
 The playground is the point. Move any control and the code beside it rewrites
 itself, carrying only what you have taken away from its default, so the snippet
 stays the shortest one that produces what you are looking at.
 
 ```sh
-flutter run                            # the showcase
+flutter run                            # the snippet above
+flutter run -t lib/showcase.dart       # the showcase, as deployed
 flutter run -t lib/ten_segments.dart   # ten segments, all animating
-flutter test                           # the showcase's own tests
+flutter test                           # every test in this directory
 ```
+
+The showcase is a separate entrypoint on purpose. pub.dev renders
+`example/lib/main.dart` under its Example tab, and a page of showcase
+scaffolding is the wrong first thing to hand someone; that slot belongs to the
+shortest runnable example there is.
 
 `lib/ten_segments.dart` is one screen with ten segments, every one gradient
 filled and bordered. It replays the entrance animation every 11 seconds and
