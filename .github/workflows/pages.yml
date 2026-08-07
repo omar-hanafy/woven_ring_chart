@@ -1,0 +1,94 @@
+name: Deploy demo
+
+# The example is the showcase, so it redeploys itself whenever it or the
+# package it renders changes. A README-only or CHANGELOG-only commit cannot
+# change what the page looks like, so it does not spend a build.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lib/**'
+      - 'example/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deployment that is already going out; queue behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: example
+
+jobs:
+  build:
+    name: Build the showcase
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # A broken showcase is worse than a stale one, so the demo's own widget
+      # tests gate the deploy rather than only the pull request.
+      - name: Test
+        run: flutter test
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build web
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # configure-pages reports the project path without a trailing slash,
+          # and --base-href requires one at both ends.
+          base_href="${BASE_PATH:-/}"
+          [[ "$base_href" == /* ]] || base_href="/$base_href"
+          [[ "$base_href" == */ ]] || base_href="$base_href/"
+
+          # The install line on the page is only trustworthy if it comes from
+          # the package being demonstrated, so it is read rather than written.
+          version=$(awk '/^version:/ {print $2; exit}' ../pubspec.yaml | tr -d "\"'")
+          if [[ -z "$version" ]]; then
+            echo 'Unable to read version from pubspec.yaml.'
+            exit 1
+          fi
+
+          echo "Building for $base_href at version $version."
+          flutter build web \
+            --release \
+            --base-href "$base_href" \
+            --dart-define=wovenVersion="$version"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: example/build/web
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

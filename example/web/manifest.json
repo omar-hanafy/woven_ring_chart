@@ -1,12 +1,12 @@
 {
-    "name": "woven_ring_chart_example",
-    "short_name": "woven_ring_chart_example",
+    "name": "woven_ring_chart",
+    "short_name": "woven_ring_chart",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#FBFAF7",
+    "theme_color": "#FBFAF7",
+    "description": "A doughnut chart for Flutter whose segments lap over one another like shingles.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {
