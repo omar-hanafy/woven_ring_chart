@@ -1,18 +1,18 @@
 import 'package:flutter/painting.dart';
 
-/// A palette that suits the weave: mid-saturation colours that stay
+/// A reference palette for woven rings: mid-saturation colours that stay
 /// distinct where two of them meet on a cap.
 ///
-/// Nothing in the component reaches for these: a ring paints exactly the
-/// colours its snakes carry. They are here so a chart looks right before
-/// anyone has picked a palette, and so the examples and tests share one.
+/// The chart never reaches for these on its own. A ring paints exactly the
+/// colours its segments carry; the palette exists so a chart looks right before
+/// anyone has chosen colours, and so the examples and tests share one set.
 class WovenPalette {
   WovenPalette._();
 
-  /// A warm off-white paper, and the default surface colour of a ring.
+  /// A warm off-white paper, and the default `WovenRingStyle.surfaceColor`.
   ///
   /// A border with no colour of its own resolves to this, which is what turns
-  /// two overlapping snakes into one cut out of the other.
+  /// two overlapping segments into one cut out of the other.
   static const Color surface = Color(0xFFFBFAF7);
 
   /// Mid-saturation blue.
@@ -33,10 +33,10 @@ class WovenPalette {
   /// Warm mid-saturation red.
   static const Color rust = Color(0xFFD85A30);
 
-  /// The dark anchor among brights.
+  /// The dark anchor among the brights.
   ///
   /// One of these in a long palette stops a ring of eight or ten bright
-  /// segments from reading as a single vibrating band.
+  /// segments from reading as a single vibrating ribbon.
   static const Color navy = Color(0xFF23385C);
 
   /// The grey of the empty and loading tracks.
@@ -47,7 +47,7 @@ class WovenPalette {
 
   /// Ten colours for longer rings, with one dark anchor among the brights.
   ///
-  /// Ten entries, so a ten segment ring can index it directly. It repeats after
+  /// Ten entries, so a ten-segment ring can index it directly. It repeats after
   /// six, which is why the sixth colour is [navy]: the repeat needs somewhere
   /// to land that does not look like a mistake.
   static const List<Color> extended = <Color>[
@@ -63,17 +63,17 @@ class WovenPalette {
     rose,
   ];
 
-  /// Repeats [palette] up to [count] colours, making sure a colour never
-  /// touches itself, including across the seam.
+  /// Repeats [palette] up to [count] colours without letting a colour touch
+  /// itself, including where the ring closes.
   ///
   /// Duplicates in [palette] are dropped before cycling. The last entry is
   /// swapped for another distinct colour when the plain repeat would put the
-  /// first colour next to itself where the ring closes.
+  /// first colour next to itself at the seam.
   ///
   /// Returns an empty list for an empty palette or a non-positive [count].
   /// Throws [ArgumentError] when the palette cannot colour a closed cycle:
-  /// more than one snake needs two distinct colours, and an odd number of
-  /// snakes above two needs three.
+  /// more than one segment needs two distinct colours, and an odd number of
+  /// segments above two needs three.
   static List<Color> cycle(List<Color> palette, int count) {
     if (palette.isEmpty || count <= 0) return const <Color>[];
     final List<Color> distinct = <Color>[];
@@ -84,7 +84,7 @@ class WovenPalette {
       throw ArgumentError.value(
         palette,
         'palette',
-        'At least two distinct colors are required for multiple snakes.',
+        'At least two distinct colors are required for multiple segments.',
       );
     }
     if (count > 2 && count.isOdd && distinct.length == 2) {

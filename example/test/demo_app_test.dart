@@ -18,7 +18,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(850, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(const WovenRingDemoApp());
+      await tester.pumpWidget(const WovenRingChartDemoApp());
       await tester.pumpAndSettle();
 
       expect(find.text('woven_ring_chart'), findsOneWidget);
@@ -31,7 +31,7 @@ void main() {
       expect(find.byKey(const ValueKey<String>('states-tab')), findsOne);
       expect(find.byKey(const ValueKey<String>('playground-ring')), findsOne);
       expect(
-        find.text('4 snakes | Solid | No border | clockwise'),
+        find.text('4 segments | Solid | No border | clockwise'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey<String>('replay-button')), findsOne);
@@ -77,7 +77,7 @@ void main() {
       expect(find.text('Empty / no data'), findsOneWidget);
       expect(find.text('Loading'), findsOneWidget);
       expect(find.text('Single 100% | jointed'), findsOneWidget);
-      expect(find.text('Optional head lift'), findsOneWidget);
+      expect(find.text('Optional head shadow'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       expect(tester.takeException(), isNull);
@@ -90,7 +90,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(850, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(const WovenRingDemoApp());
+      await tester.pumpWidget(const WovenRingChartDemoApp());
       await tester.pumpAndSettle();
 
       final Finder ring = find.byKey(const ValueKey<String>('playground-ring'));
@@ -130,9 +130,9 @@ void main() {
         index: 0,
         minimum: 0.15,
         maximum: 0.25,
-        minimumLabel: 'Band: 15%',
-        maximumLabel: 'Band: 25%',
-        readStyle: (WovenRingStyle style) => style.resolvedBandFraction,
+        minimumLabel: 'Thickness: 15%',
+        maximumLabel: 'Thickness: 25%',
+        readStyle: (WovenRingStyle style) => style.resolvedThicknessFraction,
         expectedMinimumStyle: 0.15,
         expectedMaximumStyle: 0.25,
       );
@@ -170,17 +170,20 @@ void main() {
         await tester.binding.setSurfaceSize(const Size(850, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
 
-        await tester.pumpWidget(const WovenRingDemoApp());
+        await tester.pumpWidget(const WovenRingChartDemoApp());
         await tester.pumpAndSettle();
 
         final Finder playgroundRing = find.byKey(
           const ValueKey<String>('playground-ring'),
         );
-        List<WovenSnake> painted = _paintedSnakes(tester, playgroundRing);
+        List<WovenSegment> painted = _paintedSegments(tester, playgroundRing);
         expect(painted, hasLength(4));
-        expect(painted.every((WovenSnake snake) => snake.fill.isSolid), isTrue);
         expect(
-          painted.every((WovenSnake snake) => snake.border == null),
+          painted.every((WovenSegment segment) => segment.fill.isSolid),
+          isTrue,
+        );
+        expect(
+          painted.every((WovenSegment segment) => segment.border == null),
           isTrue,
         );
         expect(
@@ -188,7 +191,7 @@ void main() {
           findsNothing,
         );
         expect(
-          find.text('4 snakes | Solid | No border | clockwise'),
+          find.text('4 segments | Solid | No border | clockwise'),
           findsOneWidget,
         );
 
@@ -202,16 +205,16 @@ void main() {
         await tester.tap(find.text('Diagnostic gradient (high contrast)').last);
         await tester.pumpAndSettle();
 
-        painted = _paintedSnakes(tester, playgroundRing);
+        painted = _paintedSegments(tester, playgroundRing);
         expect(
-          painted.every((WovenSnake snake) {
+          painted.every((WovenSegment segment) {
             final double headLightness = HSLColor.fromColor(
-              snake.fill.head,
+              segment.fill.head,
             ).lightness;
             final double tailLightness = HSLColor.fromColor(
-              snake.fill.tail,
+              segment.fill.tail,
             ).lightness;
-            return !snake.fill.isSolid &&
+            return !segment.fill.isSolid &&
                 (headLightness - tailLightness).abs() >= 0.39;
           }),
           isTrue,
@@ -237,19 +240,19 @@ void main() {
         await tester.tap(find.text('Diagnostic alternating (5%)').last);
         await tester.pumpAndSettle();
 
-        painted = _paintedSnakes(tester, playgroundRing);
+        painted = _paintedSegments(tester, playgroundRing);
         for (var i = 0; i < painted.length; i++) {
           final WovenBorder? border = painted[i].border;
           if (i.isEven) {
-            expect(border, isNull, reason: 'snake $i stays borderless');
+            expect(border, isNull, reason: 'segment $i stays borderless');
           } else {
-            expect(border, isNotNull, reason: 'snake $i is diagnostic');
+            expect(border, isNotNull, reason: 'segment $i is diagnostic');
             expect(border!.resolvedWidthFraction, 0.05);
           }
         }
         expect(
           find.text(
-            '4 snakes | Diagnostic gradient (high contrast) | Diagnostic alternating (5%) | clockwise',
+            '4 segments | Diagnostic gradient (high contrast) | Diagnostic alternating (5%) | clockwise',
           ),
           findsOneWidget,
         );
@@ -263,7 +266,7 @@ void main() {
         await tester.binding.setSurfaceSize(const Size(850, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
 
-        await tester.pumpWidget(const WovenRingDemoApp());
+        await tester.pumpWidget(const WovenRingChartDemoApp());
         await tester.pumpAndSettle();
 
         final Finder ring = find.byKey(
@@ -276,46 +279,52 @@ void main() {
         const List<double> alternate = <double>[18, 31, 23, 28];
 
         _expectVisibleDataFrame(tester, ring, count: 4);
-        _expectSnakeValues(_paintedSnakes(tester, ring), base);
+        _expectSegmentValues(_paintedSegments(tester, ring), base);
 
         await tester.tap(update);
         await tester.pump();
-        _expectSnakeValues(_paintedSnakes(tester, ring), base);
+        _expectSegmentValues(_paintedSegments(tester, ring), base);
         _expectVisibleDataFrame(tester, ring, count: 4);
 
         await tester.pump(const Duration(milliseconds: 225));
-        final List<WovenSnake> forwardMiddle = _paintedSnakes(tester, ring);
+        final List<WovenSegment> forwardMiddle = _paintedSegments(tester, ring);
         _expectVisibleDataFrame(tester, ring, count: 4);
-        expect(_snakeValuesEqual(forwardMiddle, base), isFalse);
-        expect(_snakeValuesEqual(forwardMiddle, alternate), isFalse);
+        expect(_segmentValuesEqual(forwardMiddle, base), isFalse);
+        expect(_segmentValuesEqual(forwardMiddle, alternate), isFalse);
         _expectCyclicOwnerMaskCompositor(tester, ring);
 
         await tester.pumpAndSettle();
-        _expectSnakeValues(_paintedSnakes(tester, ring), alternate);
+        _expectSegmentValues(_paintedSegments(tester, ring), alternate);
         _expectVisibleDataFrame(tester, ring, count: 4);
 
         await tester.tap(update);
         await tester.pump();
-        _expectSnakeValues(_paintedSnakes(tester, ring), alternate);
+        _expectSegmentValues(_paintedSegments(tester, ring), alternate);
         await tester.pumpAndSettle();
-        _expectSnakeValues(_paintedSnakes(tester, ring), base);
+        _expectSegmentValues(_paintedSegments(tester, ring), base);
 
         // Interrupt a second forward trip. The retarget frame must be exactly
         // the frame already on screen, not either endpoint or an empty ring.
         await tester.tap(update);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 150));
-        final List<WovenSnake> beforeInterrupt = _paintedSnakes(tester, ring);
+        final List<WovenSegment> beforeInterrupt = _paintedSegments(
+          tester,
+          ring,
+        );
         _expectVisibleDataFrame(tester, ring, count: 4);
 
         await tester.tap(update);
         await tester.pump();
-        final List<WovenSnake> afterInterrupt = _paintedSnakes(tester, ring);
-        _expectSnakeContinuity(beforeInterrupt, afterInterrupt);
+        final List<WovenSegment> afterInterrupt = _paintedSegments(
+          tester,
+          ring,
+        );
+        _expectSegmentContinuity(beforeInterrupt, afterInterrupt);
         _expectVisibleDataFrame(tester, ring, count: 4);
 
         await tester.pumpAndSettle();
-        _expectSnakeValues(_paintedSnakes(tester, ring), base);
+        _expectSegmentValues(_paintedSegments(tester, ring), base);
         expect(tester.takeException(), isNull);
       },
     );
@@ -326,7 +335,7 @@ void main() {
         await tester.binding.setSurfaceSize(const Size(850, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
 
-        await tester.pumpWidget(const WovenRingDemoApp());
+        await tester.pumpWidget(const WovenRingChartDemoApp());
         await tester.pumpAndSettle();
 
         final Finder ring = find.byKey(
@@ -341,13 +350,13 @@ void main() {
         await tester.pumpAndSettle();
 
         for (var press = 0; press < 10; press++) {
-          final List<WovenSnake> before = _paintedSnakes(tester, ring);
+          final List<WovenSegment> before = _paintedSegments(tester, ring);
           final List<double> beforeFractions = _paintedFractions(tester, ring);
 
           await tester.tap(update);
           await tester.pump();
 
-          _expectSnakeContinuity(before, _paintedSnakes(tester, ring));
+          _expectSegmentContinuity(before, _paintedSegments(tester, ring));
           _expectFractionContinuity(
             beforeFractions,
             _paintedFractions(tester, ring),
@@ -359,67 +368,73 @@ void main() {
         }
 
         await tester.pumpAndSettle();
-        _expectSnakeValues(_paintedSnakes(tester, ring), base);
+        _expectSegmentValues(_paintedSegments(tester, ring), base);
         _expectVisibleDataFrame(tester, ring, count: 4);
         expect(tester.takeException(), isNull);
       },
     );
 
-    testWidgets('five rapid Replay intro presses restart one clean timeline', (
+    testWidgets(
+      'five rapid Replay animation presses restart one clean timeline',
+      (WidgetTester tester) async {
+        await tester.binding.setSurfaceSize(const Size(850, 1000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(const WovenRingChartDemoApp());
+        await tester.pumpAndSettle();
+
+        final Finder ring = find.byKey(
+          const ValueKey<String>('playground-ring'),
+        );
+        final Finder replay = find.byKey(
+          const ValueKey<String>('replay-button'),
+        );
+        await tester.ensureVisible(replay);
+        await tester.pumpAndSettle();
+
+        for (var press = 0; press < 5; press++) {
+          await tester.tap(replay);
+          await tester.pump();
+          expect(
+            _animationProgress(tester, ring),
+            0.0,
+            reason:
+                'replay press $press restarts the same animation controller',
+          );
+          _expectSegmentValues(_paintedSegments(tester, ring), const <double>[
+            25,
+            25,
+            25,
+            25,
+          ]);
+
+          await tester.pump(const Duration(milliseconds: 35));
+          expect(
+            _animationProgress(tester, ring),
+            inExclusiveRange(0.0, 0.1),
+            reason: 'replay press $press owns one advancing timeline',
+          );
+        }
+
+        await tester.pump(const Duration(seconds: 1));
+        expect(_animationProgress(tester, ring), 1.0);
+        expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('Animate data preserves all ten segments across interruption', (
       WidgetTester tester,
     ) async {
       await tester.binding.setSurfaceSize(const Size(850, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(const WovenRingDemoApp());
-      await tester.pumpAndSettle();
-
-      final Finder ring = find.byKey(const ValueKey<String>('playground-ring'));
-      final Finder replay = find.byKey(const ValueKey<String>('replay-button'));
-      await tester.ensureVisible(replay);
-      await tester.pumpAndSettle();
-
-      for (var press = 0; press < 5; press++) {
-        await tester.tap(replay);
-        await tester.pump();
-        expect(
-          _introProgress(tester, ring),
-          0.0,
-          reason: 'replay press $press restarts the same intro controller',
-        );
-        _expectSnakeValues(_paintedSnakes(tester, ring), const <double>[
-          25,
-          25,
-          25,
-          25,
-        ]);
-
-        await tester.pump(const Duration(milliseconds: 35));
-        expect(
-          _introProgress(tester, ring),
-          inExclusiveRange(0.0, 0.1),
-          reason: 'replay press $press owns one advancing timeline',
-        );
-      }
-
-      await tester.pump(const Duration(seconds: 1));
-      expect(_introProgress(tester, ring), 1.0);
-      expect(tester.binding.transientCallbackCount, 0);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('Animate data preserves all ten snakes across interruption', (
-      WidgetTester tester,
-    ) async {
-      await tester.binding.setSurfaceSize(const Size(850, 1000));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await tester.pumpWidget(const WovenRingDemoApp());
+      await tester.pumpWidget(const WovenRingChartDemoApp());
       await tester.pumpAndSettle();
       await _selectDemoDropdown(
         tester,
         key: 'scenario-control',
-        option: 'Reference 2 | 10 snakes',
+        option: 'Reference 2 | 10 segments',
       );
 
       final Finder ring = find.byKey(const ValueKey<String>('playground-ring'));
@@ -442,31 +457,31 @@ void main() {
 
       await tester.ensureVisible(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
       _expectVisibleDataFrame(tester, ring, count: 10);
 
       await tester.tap(update);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 175));
-      final List<WovenSnake> beforeInterrupt = _paintedSnakes(tester, ring);
+      final List<WovenSegment> beforeInterrupt = _paintedSegments(tester, ring);
       _expectVisibleDataFrame(tester, ring, count: 10);
-      expect(_snakeValuesEqual(beforeInterrupt, base), isFalse);
-      expect(_snakeValuesEqual(beforeInterrupt, alternate), isFalse);
+      expect(_segmentValuesEqual(beforeInterrupt, base), isFalse);
+      expect(_segmentValuesEqual(beforeInterrupt, alternate), isFalse);
 
       await tester.tap(update);
       await tester.pump();
-      _expectSnakeContinuity(beforeInterrupt, _paintedSnakes(tester, ring));
+      _expectSegmentContinuity(beforeInterrupt, _paintedSegments(tester, ring));
       _expectVisibleDataFrame(tester, ring, count: 10);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
 
       await tester.tap(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), alternate);
+      _expectSegmentValues(_paintedSegments(tester, ring), alternate);
       _expectVisibleDataFrame(tester, ring, count: 10);
       await tester.tap(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
       _expectVisibleDataFrame(tester, ring, count: 10);
       expect(tester.takeException(), isNull);
     });
@@ -477,7 +492,7 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(850, 1000));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      await tester.pumpWidget(const WovenRingDemoApp());
+      await tester.pumpWidget(const WovenRingChartDemoApp());
       await tester.pumpAndSettle();
       await _selectDemoDropdown(
         tester,
@@ -494,42 +509,42 @@ void main() {
 
       await tester.ensureVisible(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
       _expectVisibleDataFrame(tester, ring, count: 4, tinyValue: 0.3);
 
       await tester.tap(update);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
-      final List<WovenSnake> beforeInterrupt = _paintedSnakes(tester, ring);
+      final List<WovenSegment> beforeInterrupt = _paintedSegments(tester, ring);
       _expectVisibleDataFrame(tester, ring, count: 4, tinyValue: 0.3);
-      expect(_snakeValuesEqual(beforeInterrupt, base), isFalse);
-      expect(_snakeValuesEqual(beforeInterrupt, alternate), isFalse);
+      expect(_segmentValuesEqual(beforeInterrupt, base), isFalse);
+      expect(_segmentValuesEqual(beforeInterrupt, alternate), isFalse);
 
       await tester.tap(update);
       await tester.pump();
-      _expectSnakeContinuity(beforeInterrupt, _paintedSnakes(tester, ring));
+      _expectSegmentContinuity(beforeInterrupt, _paintedSegments(tester, ring));
       _expectVisibleDataFrame(tester, ring, count: 4, tinyValue: 0.3);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
 
       await tester.tap(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), alternate);
+      _expectSegmentValues(_paintedSegments(tester, ring), alternate);
       _expectVisibleDataFrame(tester, ring, count: 4, tinyValue: 0.3);
       await tester.tap(update);
       await tester.pumpAndSettle();
-      _expectSnakeValues(_paintedSnakes(tester, ring), base);
+      _expectSegmentValues(_paintedSegments(tester, ring), base);
       _expectVisibleDataFrame(tester, ring, count: 4, tinyValue: 0.3);
       expect(tester.takeException(), isNull);
     });
 
     testWidgets(
-      'Animate data during the initial relay never blanks or restarts',
+      'Animate data during the initial sweep never blanks or restarts',
       (WidgetTester tester) async {
         await tester.binding.setSurfaceSize(const Size(850, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
 
-        await tester.pumpWidget(const WovenRingDemoApp());
+        await tester.pumpWidget(const WovenRingChartDemoApp());
         await tester.pump(const Duration(milliseconds: 300));
 
         final Finder ring = find.byKey(
@@ -538,7 +553,7 @@ void main() {
         final Finder update = find.byKey(
           const ValueKey<String>('update-data-button'),
         );
-        expect(_introProgress(tester, ring), inExclusiveRange(0.0, 1.0));
+        expect(_animationProgress(tester, ring), inExclusiveRange(0.0, 1.0));
 
         await tester.tap(update);
         await tester.pump();
@@ -546,15 +561,15 @@ void main() {
           tester,
           ring,
           count: 4,
-          expectIntroComplete: false,
+          expectAnimationComplete: false,
         );
 
         await tester.pump(const Duration(milliseconds: 450));
-        expect(_introProgress(tester, ring), lessThan(1.0));
+        expect(_animationProgress(tester, ring), lessThan(1.0));
 
         await tester.pump(const Duration(milliseconds: 250));
-        expect(_introProgress(tester, ring), 1.0);
-        _expectSnakeValues(_paintedSnakes(tester, ring), const <double>[
+        expect(_animationProgress(tester, ring), 1.0);
+        _expectSegmentValues(_paintedSegments(tester, ring), const <double>[
           18,
           31,
           23,
@@ -565,12 +580,12 @@ void main() {
     );
 
     testWidgets(
-      'Animate data during replay never blanks or starts another intro',
+      'Animate data during replay never blanks or starts another animation',
       (WidgetTester tester) async {
         await tester.binding.setSurfaceSize(const Size(850, 1000));
         addTearDown(() => tester.binding.setSurfaceSize(null));
 
-        await tester.pumpWidget(const WovenRingDemoApp());
+        await tester.pumpWidget(const WovenRingChartDemoApp());
         await tester.pumpAndSettle();
 
         final Finder ring = find.byKey(
@@ -586,7 +601,7 @@ void main() {
         await tester.tap(replay);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        expect(_introProgress(tester, ring), inExclusiveRange(0.0, 1.0));
+        expect(_animationProgress(tester, ring), inExclusiveRange(0.0, 1.0));
 
         await tester.tap(update);
         await tester.pump();
@@ -594,15 +609,15 @@ void main() {
           tester,
           ring,
           count: 4,
-          expectIntroComplete: false,
+          expectAnimationComplete: false,
         );
 
         await tester.pump(const Duration(milliseconds: 450));
-        expect(_introProgress(tester, ring), lessThan(1.0));
+        expect(_animationProgress(tester, ring), lessThan(1.0));
 
         await tester.pump(const Duration(milliseconds: 250));
-        expect(_introProgress(tester, ring), 1.0);
-        _expectSnakeValues(_paintedSnakes(tester, ring), const <double>[
+        expect(_animationProgress(tester, ring), 1.0);
+        _expectSegmentValues(_paintedSegments(tester, ring), const <double>[
           18,
           31,
           23,
@@ -631,18 +646,18 @@ dynamic _painter(WidgetTester tester, Finder ring) {
   return customPaint.painter;
 }
 
-double _introProgress(WidgetTester tester, Finder ring) {
+double _animationProgress(WidgetTester tester, Finder ring) {
   final dynamic painter = _painter(tester, ring);
   // The production painter is intentionally private, while these public
   // constructor fields are the deterministic lifecycle state under test.
   // ignore: avoid_dynamic_calls
-  return painter.introProgress as double;
+  return painter.animationProgress as double;
 }
 
-List<WovenSnake> _paintedSnakes(WidgetTester tester, Finder ring) {
+List<WovenSegment> _paintedSegments(WidgetTester tester, Finder ring) {
   final dynamic painter = _painter(tester, ring);
   // ignore: avoid_dynamic_calls
-  return List<WovenSnake>.from(painter.snakes as List<WovenSnake>);
+  return List<WovenSegment>.from(painter.segments as List<WovenSegment>);
 }
 
 List<double> _paintedFractions(WidgetTester tester, Finder ring) {
@@ -687,46 +702,49 @@ void _expectVisibleDataFrame(
   Finder ring, {
   required int count,
   double? tinyValue,
-  bool expectIntroComplete = true,
+  bool expectAnimationComplete = true,
 }) {
-  final List<WovenSnake> snakes = _paintedSnakes(tester, ring);
-  expect(snakes, hasLength(count));
+  final List<WovenSegment> segments = _paintedSegments(tester, ring);
+  expect(segments, hasLength(count));
   expect(
-    snakes.every(
-      (WovenSnake snake) =>
-          snake.value.isFinite && snake.value > 0 && snake.opacity == 1.0,
+    segments.every(
+      (WovenSegment segment) =>
+          segment.value.isFinite && segment.value > 0 && segment.opacity == 1.0,
     ),
     isTrue,
     reason: 'the data transition must never expose an empty fallback frame',
   );
   if (tinyValue != null) {
-    expect(snakes.first.value, closeTo(tinyValue, 1e-9));
+    expect(segments.first.value, closeTo(tinyValue, 1e-9));
   }
-  if (expectIntroComplete) {
+  if (expectAnimationComplete) {
     expect(
-      _introProgress(tester, ring),
+      _animationProgress(tester, ring),
       1.0,
-      reason: 'Animate data must not restart the intro animation',
+      reason: 'Animate data must not restart the animation',
     );
   }
 }
 
-void _expectSnakeValues(List<WovenSnake> actual, List<double> expected) {
+void _expectSegmentValues(List<WovenSegment> actual, List<double> expected) {
   expect(actual, hasLength(expected.length));
   for (var i = 0; i < expected.length; i++) {
-    expect(actual[i].value, closeTo(expected[i], 1e-9), reason: 'snake $i');
+    expect(actual[i].value, closeTo(expected[i], 1e-9), reason: 'segment $i');
   }
 }
 
-bool _snakeValuesEqual(List<WovenSnake> snakes, List<double> values) {
-  if (snakes.length != values.length) return false;
+bool _segmentValuesEqual(List<WovenSegment> segments, List<double> values) {
+  if (segments.length != values.length) return false;
   for (var i = 0; i < values.length; i++) {
-    if ((snakes[i].value - values[i]).abs() > 1e-9) return false;
+    if ((segments[i].value - values[i]).abs() > 1e-9) return false;
   }
   return true;
 }
 
-void _expectSnakeContinuity(List<WovenSnake> before, List<WovenSnake> after) {
+void _expectSegmentContinuity(
+  List<WovenSegment> before,
+  List<WovenSegment> after,
+) {
   expect(after, hasLength(before.length));
   for (var i = 0; i < before.length; i++) {
     expect(after[i].value, closeTo(before[i].value, 1e-9), reason: 'value $i');
@@ -761,8 +779,8 @@ List<String> _expectCyclicOwnerMaskCompositor(
   Finder ring,
 ) {
   final _CompositorRecordingCanvas canvas = _recordRingPaint(tester, ring);
-  final List<WovenSnake> snakes = _paintedSnakes(tester, ring);
-  expect(snakes.length, greaterThan(1));
+  final List<WovenSegment> segments = _paintedSegments(tester, ring);
+  expect(segments.length, greaterThan(1));
 
   var cursor = 0;
   _CompositorEvent nextEvent(String reason) {
@@ -770,32 +788,34 @@ List<String> _expectCyclicOwnerMaskCompositor(
     return canvas.events[cursor++];
   }
 
-  // Every snake first lays down an unmasked coverage fill in stable data
+  // Every segment first lays down an unmasked coverage fill in stable data
   // order. This guarantees antialiased coverage without depending on which
   // cyclic owner is later painted on top.
-  for (var i = 0; i < snakes.length; i++) {
-    final _CompositorEvent event = nextEvent('missing base fill for snake $i');
+  for (var i = 0; i < segments.length; i++) {
+    final _CompositorEvent event = nextEvent(
+      'missing base fill for segment $i',
+    );
     expect(event.kind, _CompositorEventKind.drawPath, reason: 'base fill $i');
     _expectColorNear(
       event.color!,
-      snakes[i].fill.head,
+      segments[i].fill.head,
       reason: 'base fill color $i',
     );
   }
 
-  // Each snake then owns exactly the portion inside its own silhouette and
+  // Each segment then owns exactly the portion inside its own silhouette and
   // outside its successor. The non-zero/even-odd pair is the cyclic shingle
   // rule, including the seam. Extra later passes, such as border clips, do not
   // make this assertion depend on a brittle total draw count.
-  for (var i = 0; i < snakes.length; i++) {
+  for (var i = 0; i < segments.length; i++) {
     final _CompositorEvent ownPath = nextEvent(
-      'missing owner path clip for snake $i',
+      'missing owner path clip for segment $i',
     );
     expect(ownPath.kind, _CompositorEventKind.clipPath, reason: 'owner $i');
     expect(ownPath.fillType, PathFillType.nonZero, reason: 'owner path $i');
 
     final _CompositorEvent outsideSuccessor = nextEvent(
-      'missing successor complement for snake $i',
+      'missing successor complement for segment $i',
     );
     expect(
       outsideSuccessor.kind,
@@ -809,12 +829,12 @@ List<String> _expectCyclicOwnerMaskCompositor(
     );
 
     final _CompositorEvent ownerFill = nextEvent(
-      'missing masked owner fill for snake $i',
+      'missing masked owner fill for segment $i',
     );
     expect(ownerFill.kind, _CompositorEventKind.drawPath, reason: 'owner $i');
     _expectColorNear(
       ownerFill.color!,
-      snakes[i].fill.head,
+      segments[i].fill.head,
       reason: 'owner fill color $i',
     );
   }
