@@ -3,9 +3,11 @@
 [![pub package](https://img.shields.io/pub/v/woven_ring_chart.svg)](https://pub.dev/packages/woven_ring_chart)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/omar-hanafy/woven_ring_chart/blob/main/LICENSE)
 
+**[Try the live demo →](https://omar-hanafy.github.io/woven_ring_chart/)**
+
 A doughnut chart for Flutter whose segments lap over one another like shingles.
 
-![A four segment woven ring drawing itself, then reshaping as its data changes](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/doc/woven_ring_chart.gif)
+[![A four segment woven ring drawing itself, then reshaping as its data changes](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/doc/woven_ring_chart.gif)](https://omar-hanafy.github.io/woven_ring_chart/)
 
 Most doughnut charts cut between segments with a straight radial line. This one
 does not have a straight line anywhere. Each segment is a constant-width bar
@@ -65,7 +67,7 @@ and centres itself in the box, so it is safe inside a `Row`, a `Card`, or an
 unbounded `SingleChildScrollView`. With nothing bounded on either side it
 settles at 240 logical pixels.
 
-![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/screenshots/woven_ring_chart.png)
+[![Four woven rings: solid, gradient with borders, ten segments, and one with a head shadow](https://raw.githubusercontent.com/omar-hanafy/woven_ring_chart/5ca191d40a7fdd0517f0bfb59e8ebe8cfd09d220/screenshots/woven_ring_chart.png)](https://omar-hanafy.github.io/woven_ring_chart/)
 
 ## Shape
 
@@ -305,23 +307,28 @@ extents.first.headApex(g.capAngle, clockwise: style.clockwise);
 
 ## The example
 
+The example is the showcase, and it is
+[live in your browser](https://omar-hanafy.github.io/woven_ring_chart/). Every
+push to `main` that touches the package or the example redeploys it, so what is
+on that page is what is on `main`.
+
 ```sh
 cd example
-flutter run                            # the validation lab
+flutter run                            # the showcase
 flutter run -t lib/ten_segments.dart   # ten segments, all animating
 ```
 
-The lab has three tabs. Playground drives data, fill, border, animation,
-direction, gradient axis, small-value policy, thickness, overlap, start angle,
-shadow, selection, and live data updates from real controls. Style matrix shows
-the fill by border by direction cross product, plus the deliberately exaggerated
-diagnostic cases. States shows empty, loading, both single-segment styles, both
-small-value policies, selection, and the head shadow.
+It is one page. Every section on it pairs a chart that is really running with
+the Dart that produced it, so a look you like is a snippet you can take. The
+playground in the middle goes further: move any control and the code beside it
+rewrites itself, showing only what you have taken away from its default. Copy
+that and you get the chart you are looking at, which is checked rather than
+promised — see below.
 
 ## How this is checked
 
-298 tests run against the package and another 10 against the example app. Most
-of the first number is one file, `test/spec/catalog_test.dart`, which shares no
+298 tests run against the package and another 79 against the showcase. Most of
+the first number is one file, `test/spec/catalog_test.dart`, which shares no
 helper with the rest and re-derives the geometry from the written specification
 instead of from `WovenRingGeometry`, so a bug in the production geometry cannot
 hide inside the checker meant to catch it. The whole specification collapses
@@ -341,9 +348,18 @@ antialiasing and nothing more.
 [doc/TEST_MATRIX.md](https://github.com/omar-hanafy/woven_ring_chart/blob/main/doc/TEST_MATRIX.md)
 lists what each section covers.
 
+The showcase's own suite is mostly one idea: the live demo claims that the code
+beside a chart is the code that built it, and
+`example/test/playground_config_test.dart` makes that claim checkable. It takes
+the generated snippet, parses the segments and style back out of the text, and
+compares them against the values the widget was actually handed, across the
+whole cross product of the controls. Neither the page nor the generator can
+drift from the other without a red test.
+
 ```sh
 dart analyze
 flutter test
+cd example && flutter test
 ```
 
 ## License

@@ -55,6 +55,14 @@ jobs:
       - name: Test
         run: flutter test
 
+      # The example is the showcase, and main deploys it. Its own widget tests
+      # belong on the pull request rather than only on the deploy.
+      - name: Test the example
+        working-directory: example
+        run: |
+          flutter pub get
+          flutter test
+
   test-beta:
     name: Test on beta
     runs-on: ubuntu-latest

@@ -1,7 +1,7 @@
 name: woven_ring_chart_example
 description: >
-  Validation lab for woven_ring_chart: every control, every state, and a
-  ten segment ring animating on a loop.
+  The woven_ring_chart showcase: one page pairing every live chart with the
+  Dart that produced it.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -11,6 +11,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Only so the showcase's pub.dev and GitHub links open. The package itself
+  # has no dependencies beyond Flutter.
+  url_launcher: ^6.3.1
   woven_ring_chart:
     path: ../
 
