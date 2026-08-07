@@ -1,5 +1,5 @@
 // Renders the README animation and the pub.dev screenshot straight from the
-// widget, so the pictures are the component rather than a screen recording of
+// widget, so the pictures are the chart itself rather than a screen recording of
 // it. Everything is deterministic: same frames on every machine, no cursor, no
 // window chrome, no display colour profile baked in.
 //
@@ -17,24 +17,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 const String outDir = 'build/media';
-const Color surface = WovenPalette.surface;
+const Color surfaceColor = WovenPalette.surface;
 
 /// The animation runs at 20fps, which is as fast as a GIF is worth playing and
 /// keeps the file under a megabyte.
 const Duration frameStep = Duration(milliseconds: 50);
 
-List<WovenSnake> gradientSnakes(List<double> values, {bool border = false}) =>
-    <WovenSnake>[
-      for (var i = 0; i < values.length; i++)
-        WovenSnake(
-          value: values[i],
-          fill: WovenFill.shaded(
-            WovenPalette.extended[i % WovenPalette.extended.length],
-            step: 0.045,
-          ),
-          border: border ? const WovenBorder() : null,
-        ),
-    ];
+List<WovenSegment> gradientSegments(
+  List<double> values, {
+  bool border = false,
+}) => <WovenSegment>[
+  for (var i = 0; i < values.length; i++)
+    WovenSegment(
+      value: values[i],
+      fill: WovenFill.shaded(
+        WovenPalette.extended[i % WovenPalette.extended.length],
+        step: 0.045,
+      ),
+      border: border ? const WovenBorder() : null,
+    ),
+];
 
 void main() {
   testWidgets('render media', (WidgetTester tester) async {
@@ -61,21 +63,21 @@ void main() {
       required double width,
       required double height,
     }) {
-      // The surface has to be inside the boundary. Captured from outside it the
+      // The surfaceColor has to be inside the boundary. Captured from outside it the
       // frames come out transparent, and a GIF has one bit of transparency, so
       // every antialiased edge is then cut to a hard stair-step. It also makes
       // the picture honest: a border with no colour of its own paints in the
-      // surface colour, so a ring is only drawn correctly against the surface
+      // surfaceColor colour, so a ring is only drawn correctly against the surfaceColor
       // it was given.
       return Directionality(
         textDirection: TextDirection.ltr,
         child: ColoredBox(
-          color: surface,
+          color: surfaceColor,
           child: Center(
             child: RepaintBoundary(
               key: shot,
               child: ColoredBox(
-                color: surface,
+                color: surfaceColor,
                 child: SizedBox(width: width, height: height, child: child),
               ),
             ),
@@ -85,7 +87,7 @@ void main() {
     }
 
     // ---- the animation -----------------------------------------------------
-    // One ring, three acts: the relay reveal, then two data changes that
+    // One ring, three acts: the sweep reveal, then two data changes that
     // stretch the segments in place. Re-pumping the same keyed widget with new
     // values is exactly what an app does, so this is the real transition and
     // not a scripted approximation of one.
@@ -97,11 +99,11 @@ void main() {
         // Room to breathe, so the outer circle never reads as cropped by the
         // edge of the frame.
         padding: const EdgeInsets.all(18),
-        child: WovenRing(
+        child: WovenRingChart(
           key: ring,
-          snakes: gradientSnakes(values),
-          style: const WovenRingStyle(surface: surface),
-          introDuration: const Duration(milliseconds: 1100),
+          segments: gradientSegments(values),
+          style: const WovenRingStyle(surfaceColor: surfaceColor),
+          animationDuration: const Duration(milliseconds: 1100),
         ),
       ),
       width: 320,
@@ -119,7 +121,7 @@ void main() {
       }
     }
 
-    // The relay travels once round, then the ring sits still long enough to be
+    // The sweep travels once round, then the ring sits still long enough to be
     // read before anything moves again.
     await run(const <double>[37, 19, 29, 15], 30);
     await run(const <double>[12, 34, 22, 32], 16);
@@ -127,11 +129,11 @@ void main() {
     await run(const <double>[37, 19, 29, 15], 14);
 
     // ---- the still ---------------------------------------------------------
-    // Four rings that between them say what the component is: the plain
+    // Four rings that between them say what the chart is: the plain
     // reference ring, the same ring bordered so the lap reads as a cut, a ten
-    // segment ring, and a lifted one.
+    // segment ring, and a shadowed one.
     await tester.pumpWidget(const SizedBox.shrink());
-    // The test surface defaults to 800x600, which would clip the still.
+    // The test surfaceColor defaults to 800x600, which would clip the still.
     await tester.binding.setSurfaceSize(const Size(820, 820));
     await tester.pumpWidget(
       stage(
@@ -145,29 +147,29 @@ void main() {
                 children: <Widget>[
                   SizedBox.square(
                     dimension: 300,
-                    child: WovenRing(
-                      snakes: <WovenSnake>[
+                    child: WovenRingChart(
+                      segments: <WovenSegment>[
                         for (var i = 0; i < 4; i++)
-                          WovenSnake.solid(
+                          WovenSegment.solid(
                             const <double>[37, 19, 29, 15][i],
                             WovenPalette.quartet[i],
                           ),
                       ],
-                      style: const WovenRingStyle(surface: surface),
-                      intro: WovenRingIntro.none,
+                      style: const WovenRingStyle(surfaceColor: surfaceColor),
+                      animation: WovenRingAnimation.none,
                     ),
                   ),
                   SizedBox.square(
                     dimension: 300,
-                    child: WovenRing(
-                      snakes: gradientSnakes(const <double>[
+                    child: WovenRingChart(
+                      segments: gradientSegments(const <double>[
                         30,
                         22,
                         26,
                         22,
                       ], border: true),
-                      style: const WovenRingStyle(surface: surface),
-                      intro: WovenRingIntro.none,
+                      style: const WovenRingStyle(surfaceColor: surfaceColor),
+                      animation: WovenRingAnimation.none,
                     ),
                   ),
                 ],
@@ -177,8 +179,8 @@ void main() {
                 children: <Widget>[
                   SizedBox.square(
                     dimension: 300,
-                    child: WovenRing(
-                      snakes: gradientSnakes(const <double>[
+                    child: WovenRingChart(
+                      segments: gradientSegments(const <double>[
                         11,
                         8,
                         13,
@@ -190,26 +192,26 @@ void main() {
                         9,
                         10,
                       ]),
-                      style: const WovenRingStyle(surface: surface),
-                      intro: WovenRingIntro.none,
+                      style: const WovenRingStyle(surfaceColor: surfaceColor),
+                      animation: WovenRingAnimation.none,
                     ),
                   ),
                   SizedBox.square(
                     dimension: 300,
-                    child: WovenRing(
-                      snakes: <WovenSnake>[
+                    child: WovenRingChart(
+                      segments: <WovenSegment>[
                         for (var i = 0; i < 4; i++)
-                          WovenSnake.solid(
+                          WovenSegment.solid(
                             const <double>[25, 25, 25, 25][i],
                             WovenPalette.quartet[i],
                           ),
                       ],
                       style: const WovenRingStyle(
-                        surface: surface,
-                        lift: WovenLift(),
-                        bandFraction: 0.26,
+                        surfaceColor: surfaceColor,
+                        shadow: WovenShadow(),
+                        thicknessFraction: 0.26,
                       ),
-                      intro: WovenRingIntro.none,
+                      animation: WovenRingAnimation.none,
                     ),
                   ),
                 ],

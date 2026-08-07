@@ -4,26 +4,26 @@ import 'package:flutter/material.dart';
 
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
-void main() => runApp(const WovenRingDemoApp());
+void main() => runApp(const WovenRingChartDemoApp());
 
-class WovenRingDemoApp extends StatelessWidget {
-  const WovenRingDemoApp({super.key});
+class WovenRingChartDemoApp extends StatelessWidget {
+  const WovenRingChartDemoApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const Color surface = Color(0xFFFBFAF7);
+    const Color surfaceColor = Color(0xFFFBFAF7);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Woven ring validation lab',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: WovenPalette.purple,
-          surface: surface,
+          surface: surfaceColor,
         ),
-        scaffoldBackgroundColor: surface,
+        scaffoldBackgroundColor: surfaceColor,
         useMaterial3: true,
       ),
-      home: const WovenRingLabPage(),
+      home: const WovenRingChartLabPage(),
     );
   }
 }
@@ -34,31 +34,31 @@ enum _FillMode { solid, gradient, diagnosticGradient, mixed }
 
 enum _BorderMode { none, selected, mixed, all, diagnosticAlternating }
 
-class WovenRingLabPage extends StatefulWidget {
-  const WovenRingLabPage({super.key});
+class WovenRingChartLabPage extends StatefulWidget {
+  const WovenRingChartLabPage({super.key});
 
   @override
-  State<WovenRingLabPage> createState() => _WovenRingLabPageState();
+  State<WovenRingChartLabPage> createState() => _WovenRingChartLabPageState();
 }
 
-class _WovenRingLabPageState extends State<WovenRingLabPage> {
+class _WovenRingChartLabPageState extends State<WovenRingChartLabPage> {
   static const Color _surface = Color(0xFFFBFAF7);
   static const Color _ink = Color(0xFF202532);
 
-  final WovenRingController _controller = WovenRingController();
+  final WovenRingChartController _controller = WovenRingChartController();
 
   _Scenario _scenario = _Scenario.quartet;
   _FillMode _fillMode = _FillMode.solid;
   _BorderMode _borderMode = _BorderMode.none;
-  WovenRingIntro _intro = WovenRingIntro.relay;
-  WovenGradientAxis _gradientAxis = WovenGradientAxis.alongLength;
+  WovenRingAnimation _animation = WovenRingAnimation.sweep;
+  WovenGradientAxis _gradientAxis = WovenGradientAxis.alongSegment;
   WovenGradientDirection _gradientDirection = WovenGradientDirection.headToTail;
-  WovenMinimumPolicy _minimumPolicy = WovenMinimumPolicy.enforce;
+  WovenSmallValuePolicy _minimumPolicy = WovenSmallValuePolicy.enforce;
   bool _clockwise = true;
-  bool _lift = false;
+  bool _shadow = false;
   bool _alternateData = false;
   int _selected = 0;
-  double _bandFraction = 0.20;
+  double _thicknessFraction = 0.20;
   double _overlapFraction = 0.50;
   double _startDegrees = -90.0;
 
@@ -104,34 +104,34 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
   }
 
   Widget _buildPlayground() {
-    final List<WovenSnake> snakes = _snakesFor(
+    final List<WovenSegment> segments = _segmentsFor(
       _scenario,
       fillMode: _fillMode,
       borderMode: _borderMode,
       alternate: _alternateData,
     );
-    final int? highlighted =
-        _borderMode == _BorderMode.selected && _selected < snakes.length
+    final int? highlightedIndex =
+        _borderMode == _BorderMode.selected && _selected < segments.length
         ? _selected
         : null;
     final WovenRingStyle style = _style(
       clockwise: _clockwise,
       gradientAxis: _gradientAxis,
       gradientDirection: _gradientDirection,
-      minimumPolicy: _minimumPolicy,
-      bandFraction: _bandFraction,
+      smallValuePolicy: _minimumPolicy,
+      thicknessFraction: _thicknessFraction,
       overlapFraction: _overlapFraction,
       startDegrees: _startDegrees,
-      lift: _lift,
+      shadow: _shadow,
     );
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = constraints.maxWidth >= 900;
         final Widget preview = _previewCard(
-          snakes: snakes,
+          segments: segments,
           style: style,
-          highlighted: highlighted,
+          highlightedIndex: highlightedIndex,
         );
         final Widget controls = _controlsCard();
         return SingleChildScrollView(
@@ -158,9 +158,9 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
   }
 
   Widget _previewCard({
-    required List<WovenSnake> snakes,
+    required List<WovenSegment> segments,
     required WovenRingStyle style,
-    required int? highlighted,
+    required int? highlightedIndex,
   }) {
     return Card(
       elevation: 0,
@@ -170,7 +170,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
         child: Column(
           children: <Widget>[
             Text(
-              _summary(snakes.length),
+              _summary(segments.length),
               key: const ValueKey<String>('configuration-summary'),
               textAlign: TextAlign.center,
               style: const TextStyle(color: Color(0xFF667085)),
@@ -192,18 +192,18 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
             const SizedBox(height: 24),
             SizedBox.square(
               dimension: 360,
-              child: WovenRing(
+              child: WovenRingChart(
                 key: const ValueKey<String>('playground-ring'),
-                snakes: snakes,
+                segments: segments,
                 style: style,
-                intro: _intro,
+                animation: _animation,
                 controller: _controller,
-                highlighted: highlighted,
+                highlightedIndex: highlightedIndex,
                 semanticLabel: 'Interactive woven ring preview',
-                semanticValue: '${snakes.length} visible data entries',
+                semanticValue: '${segments.length} visible data entries',
                 center: _CenterLabel(
-                  value: snakes.length.toString(),
-                  label: 'snakes',
+                  value: segments.length.toString(),
+                  label: 'segments',
                 ),
               ),
             ),
@@ -217,7 +217,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
                   key: const ValueKey<String>('replay-button'),
                   onPressed: _controller.replay,
                   icon: const Icon(Icons.play_arrow_rounded),
-                  label: const Text('Replay intro'),
+                  label: const Text('Replay animation'),
                 ),
                 OutlinedButton.icon(
                   key: const ValueKey<String>('update-data-button'),
@@ -229,11 +229,11 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
                 ),
                 OutlinedButton.icon(
                   key: const ValueKey<String>('select-next-button'),
-                  onPressed: snakes.isEmpty
+                  onPressed: segments.isEmpty
                       ? null
                       : () {
                           setState(
-                            () => _selected = (_selected + 1) % snakes.length,
+                            () => _selected = (_selected + 1) % segments.length,
                           );
                         },
                   icon: const Icon(Icons.touch_app_outlined),
@@ -292,17 +292,17 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
               onChanged: (value) => setState(() => _borderMode = value),
             ),
             const SizedBox(height: 12),
-            _dropdown<WovenRingIntro>(
-              key: 'intro-control',
-              label: 'Intro animation',
-              value: _intro,
-              values: WovenRingIntro.values,
+            _dropdown<WovenRingAnimation>(
+              key: 'animation-control',
+              label: 'Animation',
+              value: _animation,
+              values: WovenRingAnimation.values,
               text: (value) => switch (value) {
-                WovenRingIntro.relay => 'Relay',
-                WovenRingIntro.bloom => 'Bloom',
-                WovenRingIntro.none => 'None',
+                WovenRingAnimation.sweep => 'Sweep',
+                WovenRingAnimation.grow => 'Grow',
+                WovenRingAnimation.none => 'None',
               },
-              onChanged: (value) => setState(() => _intro = value),
+              onChanged: (value) => setState(() => _animation = value),
             ),
             const SizedBox(height: 12),
             _dropdown<WovenGradientAxis>(
@@ -310,18 +310,18 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
               label: 'Gradient axis',
               value: _gradientAxis,
               values: WovenGradientAxis.values,
-              text: (value) => value == WovenGradientAxis.alongLength
-                  ? 'Along each snake'
-                  : 'Across the band',
+              text: (value) => value == WovenGradientAxis.alongSegment
+                  ? 'Along each segment'
+                  : 'Across the thickness',
               onChanged: (value) => setState(() => _gradientAxis = value),
             ),
             const SizedBox(height: 12),
-            _dropdown<WovenMinimumPolicy>(
+            _dropdown<WovenSmallValuePolicy>(
               key: 'minimum-policy-control',
               label: 'Small-value policy',
               value: _minimumPolicy,
-              values: WovenMinimumPolicy.values,
-              text: (value) => value == WovenMinimumPolicy.enforce
+              values: WovenSmallValuePolicy.values,
+              text: (value) => value == WovenSmallValuePolicy.enforce
                   ? 'Enforce minimum'
                   : 'Allow vanish',
               onChanged: (value) => setState(() => _minimumPolicy = value),
@@ -349,20 +349,20 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
               },
             ),
             SwitchListTile.adaptive(
-              key: const ValueKey<String>('lift-control'),
+              key: const ValueKey<String>('shadow-control'),
               contentPadding: EdgeInsets.zero,
-              title: const Text('Subtle head lift'),
-              value: _lift,
-              onChanged: (value) => setState(() => _lift = value),
+              title: const Text('Subtle head shadow'),
+              value: _shadow,
+              onChanged: (value) => setState(() => _shadow = value),
             ),
             _slider(
-              label: 'Band',
-              value: _bandFraction,
+              label: 'Thickness',
+              value: _thicknessFraction,
               min: 0.15,
               max: 0.25,
               divisions: 10,
-              valueLabel: '${(_bandFraction * 100).round()}%',
-              onChanged: (value) => setState(() => _bandFraction = value),
+              valueLabel: '${(_thicknessFraction * 100).round()}%',
+              onChanged: (value) => setState(() => _thicknessFraction = value),
             ),
             _slider(
               label: 'Overlap',
@@ -399,7 +399,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
             _MatrixCase(
               title:
                   '${clockwise ? 'CW' : 'CCW'} | ${fill == _FillMode.solid ? 'solid' : 'gradient'} | ${bordered ? 'border' : 'no border'}',
-              snakes: _snakesFor(
+              segments: _segmentsFor(
                 _Scenario.quartet,
                 fillMode: fill,
                 borderMode: bordered ? _BorderMode.all : _BorderMode.none,
@@ -408,7 +408,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
             ),
       _MatrixCase(
         title: 'Diagnostic gradient | high contrast | no border',
-        snakes: _snakesFor(
+        segments: _segmentsFor(
           _Scenario.quartet,
           fillMode: _FillMode.diagnosticGradient,
           borderMode: _BorderMode.none,
@@ -417,7 +417,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
       ),
       _MatrixCase(
         title: 'Solid | diagnostic alternating border',
-        snakes: _snakesFor(
+        segments: _segmentsFor(
           _Scenario.quartet,
           fillMode: _FillMode.solid,
           borderMode: _BorderMode.diagnosticAlternating,
@@ -425,17 +425,17 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
         style: _style(),
       ),
       _MatrixCase(
-        title: 'Across-band gradient | all borders',
-        snakes: _snakesFor(
+        title: 'Across-thickness gradient | all borders',
+        segments: _segmentsFor(
           _Scenario.quartet,
           fillMode: _FillMode.gradient,
           borderMode: _BorderMode.all,
         ),
-        style: _style(gradientAxis: WovenGradientAxis.acrossBand),
+        style: _style(gradientAxis: WovenGradientAxis.acrossThickness),
       ),
       _MatrixCase(
         title: 'Mixed fill | mixed border | non-cardinal CCW',
-        snakes: _snakesFor(
+        segments: _segmentsFor(
           _Scenario.extended,
           fillMode: _FillMode.mixed,
           borderMode: _BorderMode.mixed,
@@ -484,10 +484,10 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
             children: <Widget>[
               SizedBox.square(
                 dimension: 174,
-                child: WovenRing(
-                  snakes: item.snakes,
+                child: WovenRingChart(
+                  segments: item.segments,
                   style: item.style,
-                  intro: WovenRingIntro.none,
+                  animation: WovenRingAnimation.none,
                   semanticLabel: item.title,
                 ),
               ),
@@ -509,13 +509,16 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
     final List<_StateCase> cases = <_StateCase>[
       _StateCase(
         title: 'Empty / no data',
-        note: 'Neutral ring, same band, no joints',
-        ring: WovenRing.empty(style: base, semanticLabel: 'Empty woven ring'),
+        note: 'Neutral ring, same thickness, no joints',
+        ring: WovenRingChart.empty(
+          style: base,
+          semanticLabel: 'Empty woven ring',
+        ),
       ),
       _StateCase(
         title: 'Loading',
-        note: 'One neutral 20% snake chasing the track',
-        ring: WovenRing.loading(
+        note: 'One neutral 20% segment chasing the track',
+        ring: WovenRingChart.loading(
           style: base,
           semanticLabel: 'Loading woven ring',
         ),
@@ -523,80 +526,84 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
       _StateCase(
         title: 'Single 100% | jointed',
         note: 'Explicit alternate policy',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.singleValue,
             fillMode: _FillMode.solid,
             borderMode: _BorderMode.none,
           ),
-          style: base.copyWith(singleSnakeStyle: WovenSingleSnakeStyle.jointed),
-          intro: WovenRingIntro.none,
+          style: base.copyWith(
+            singleSegmentStyle: WovenSingleSegmentStyle.jointed,
+          ),
+          animation: WovenRingAnimation.none,
         ),
       ),
       _StateCase(
         title: 'Single 100% | smooth',
         note: 'Default: one value has no boundary to show',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.singleValue,
             fillMode: _FillMode.gradient,
             borderMode: _BorderMode.none,
           ),
           style: base,
-          intro: WovenRingIntro.none,
+          animation: WovenRingAnimation.none,
         ),
       ),
       _StateCase(
         title: 'Tiny value | enforced',
         note: 'Legibility wins over exact proportions',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.tinyValue,
             fillMode: _FillMode.solid,
             borderMode: _BorderMode.none,
           ),
-          style: base.copyWith(minimumPolicy: WovenMinimumPolicy.enforce),
-          intro: WovenRingIntro.none,
+          style: base.copyWith(smallValuePolicy: WovenSmallValuePolicy.enforce),
+          animation: WovenRingAnimation.none,
         ),
       ),
       _StateCase(
         title: 'Tiny value | allowed to vanish',
         note: 'Truthful policy, swallowed values collapse safely',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.tinyValue,
             fillMode: _FillMode.solid,
             borderMode: _BorderMode.none,
           ),
-          style: base.copyWith(minimumPolicy: WovenMinimumPolicy.allowVanish),
-          intro: WovenRingIntro.none,
+          style: base.copyWith(
+            smallValuePolicy: WovenSmallValuePolicy.allowVanish,
+          ),
+          animation: WovenRingAnimation.none,
         ),
       ),
       _StateCase(
         title: 'Selected',
         note: 'One inside border, unchanged silhouette',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.quartet,
             fillMode: _FillMode.solid,
             borderMode: _BorderMode.none,
           ),
           style: base,
-          highlighted: 2,
-          intro: WovenRingIntro.none,
+          highlightedIndex: 2,
+          animation: WovenRingAnimation.none,
         ),
       ),
       _StateCase(
-        title: 'Optional head lift',
+        title: 'Optional head shadow',
         note: 'Tight shadow under heads only, never in the hole',
-        ring: WovenRing(
-          snakes: _snakesFor(
+        ring: WovenRingChart(
+          segments: _segmentsFor(
             _Scenario.quartet,
             fillMode: _FillMode.solid,
             borderMode: _BorderMode.none,
           ),
-          style: base.copyWith(lift: const WovenLift()),
-          intro: WovenRingIntro.none,
+          style: base.copyWith(shadow: const WovenShadow()),
+          animation: WovenRingAnimation.none,
         ),
       ),
     ];
@@ -643,7 +650,7 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
     );
   }
 
-  List<WovenSnake> _snakesFor(
+  List<WovenSegment> _segmentsFor(
     _Scenario scenario, {
     required _FillMode fillMode,
     required _BorderMode borderMode,
@@ -675,13 +682,13 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
     if (alternate && colors.length > 1) {
       colors = <Color>[...colors.skip(1), colors.first];
     }
-    return <WovenSnake>[
+    return <WovenSegment>[
       for (var i = 0; i < values.length; i++)
-        WovenSnake(
+        WovenSegment(
           value: values[i],
           fill: _fillFor(colors[i % colors.length], fillMode, i),
           border: _borderFor(borderMode, i),
-          semanticLabel: 'Snake ${i + 1}, value ${values[i]}',
+          semanticLabel: 'Segment ${i + 1}, value ${values[i]}',
         ),
     ];
   }
@@ -711,25 +718,25 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
 
   WovenRingStyle _style({
     bool clockwise = true,
-    WovenGradientAxis gradientAxis = WovenGradientAxis.alongLength,
+    WovenGradientAxis gradientAxis = WovenGradientAxis.alongSegment,
     WovenGradientDirection gradientDirection =
         WovenGradientDirection.headToTail,
-    WovenMinimumPolicy minimumPolicy = WovenMinimumPolicy.enforce,
-    double bandFraction = 0.20,
+    WovenSmallValuePolicy smallValuePolicy = WovenSmallValuePolicy.enforce,
+    double thicknessFraction = 0.20,
     double overlapFraction = 0.50,
     double startDegrees = -90.0,
-    bool lift = false,
+    bool shadow = false,
   }) {
     return WovenRingStyle(
       clockwise: clockwise,
       gradientAxis: gradientAxis,
       gradientDirection: gradientDirection,
-      minimumPolicy: minimumPolicy,
-      bandFraction: bandFraction,
+      smallValuePolicy: smallValuePolicy,
+      thicknessFraction: thicknessFraction,
       overlapFraction: overlapFraction,
       startAngle: startDegrees * math.pi / 180,
-      lift: lift ? const WovenLift() : null,
-      surface: _surface,
+      shadow: shadow ? const WovenShadow() : null,
+      surfaceColor: _surface,
     );
   }
 
@@ -794,12 +801,12 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
   }
 
   String _summary(int count) {
-    return '$count snakes | ${_fillName(_fillMode)} | ${_borderName(_borderMode)} | ${_clockwise ? 'clockwise' : 'counter-clockwise'}';
+    return '$count segments | ${_fillName(_fillMode)} | ${_borderName(_borderMode)} | ${_clockwise ? 'clockwise' : 'counter-clockwise'}';
   }
 
   String _scenarioName(_Scenario value) => switch (value) {
-    _Scenario.quartet => 'Reference 1 | 4 snakes',
-    _Scenario.extended => 'Reference 2 | 10 snakes',
+    _Scenario.quartet => 'Reference 1 | 4 segments',
+    _Scenario.extended => 'Reference 2 | 10 segments',
     _Scenario.tinyValue => 'Tiny-value stress case',
     _Scenario.singleValue => 'Single value | 100%',
   };
@@ -814,8 +821,8 @@ class _WovenRingLabPageState extends State<WovenRingLabPage> {
   String _borderName(_BorderMode value) => switch (value) {
     _BorderMode.none => 'No border',
     _BorderMode.selected => 'Selected only',
-    _BorderMode.mixed => 'Mixed per snake',
-    _BorderMode.all => 'All snakes',
+    _BorderMode.mixed => 'Mixed per segment',
+    _BorderMode.all => 'All segments',
     _BorderMode.diagnosticAlternating => 'Diagnostic alternating (5%)',
   };
 }
@@ -836,7 +843,7 @@ class _CenterLabel extends StatelessWidget {
           Text(
             value,
             style: const TextStyle(
-              color: _WovenRingLabPageState._ink,
+              color: _WovenRingChartLabPageState._ink,
               fontSize: 54,
               height: 1,
               fontWeight: FontWeight.w800,
@@ -856,12 +863,12 @@ class _CenterLabel extends StatelessWidget {
 class _MatrixCase {
   const _MatrixCase({
     required this.title,
-    required this.snakes,
+    required this.segments,
     required this.style,
   });
 
   final String title;
-  final List<WovenSnake> snakes;
+  final List<WovenSegment> segments;
   final WovenRingStyle style;
 }
 

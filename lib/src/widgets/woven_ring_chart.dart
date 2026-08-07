@@ -3,141 +3,170 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
-import 'enums.dart';
-import 'geometry.dart';
-import 'painter.dart';
-import 'palette.dart';
-import 'snake.dart';
-import 'style.dart';
-
-/// Replays the intro animation. Handy for demos and for "refresh" affordances.
-///
-/// Create one, hand it to a [WovenRing], and dispose it with the surrounding
-/// state. A controller attached to a ring whose intro is [WovenRingIntro.none]
-/// does nothing.
-class WovenRingController extends ChangeNotifier {
-  /// Creates a controller. Dispose it with the state that owns it.
-  WovenRingController();
-
-  /// Runs the ring's intro again from the beginning, even if it had finished.
-  ///
-  /// Under reduced motion the intro jumps straight to its final frame.
-  void replay() => notifyListeners();
-}
+import '../geometry/ring_geometry.dart';
+import '../geometry/segment_fractions.dart';
+import '../model/animation.dart';
+import '../model/border.dart';
+import '../model/chart_mode.dart';
+import '../model/fill.dart';
+import '../model/palette.dart';
+import '../model/segment.dart';
+import '../model/style.dart';
+import '../painting/ring_painter.dart';
+import 'controller.dart';
 
 /// A doughnut chart whose segments lap over one another like shingles.
 ///
 /// Every boundary between two colours is the backward semicircle of a round
-/// cap, because a snake is a constant-width bar with semicircular ends bent
-/// along the ring. The ring is square: it takes the smaller of its
-/// constraints and centres itself in whatever box it is given.
+/// cap, because a segment is a constant-width bar with semicircular ends bent
+/// along the ring. The chart is square: it takes the smaller of its constraints
+/// and centres itself in whatever box it is given, so it is safe inside a
+/// [Row], a card, or an unbounded scroll view. With no bounded side at all it
+/// settles at 240 logical pixels.
 ///
 /// ```dart
-/// WovenRing(
-///   snakes: const <WovenSnake>[
-///     WovenSnake.solid(37, WovenPalette.purple),
-///     WovenSnake.solid(19, WovenPalette.green),
-///     WovenSnake.solid(29, WovenPalette.amber),
-///     WovenSnake.solid(15, WovenPalette.rose),
+/// WovenRingChart(
+///   segments: <WovenSegment>[
+///     WovenSegment.solid(37, WovenPalette.purple),
+///     WovenSegment.solid(19, WovenPalette.green),
+///     WovenSegment.solid(29, WovenPalette.amber),
+///     WovenSegment.solid(15, WovenPalette.rose),
 ///   ],
 ///   center: const Text('100'),
 ///   semanticLabel: 'Spending by category',
 /// )
 /// ```
 ///
-/// Use [WovenRing.empty] for a ring with no data yet and [WovenRing.loading]
-/// while data is on its way, so the shape on screen never changes size.
-class WovenRing extends StatefulWidget {
-  /// A ring built from [snakes].
+/// Use [WovenRingChart.empty] for a chart with no data yet and
+/// [WovenRingChart.loading] while data is on its way: both keep the diameter
+/// and thickness of a chart with data, so nothing on screen jumps when the
+/// data lands.
+class WovenRingChart extends StatefulWidget {
+  /// A ring built from [segments].
   ///
   /// The list is snapshotted on every build, so a caller may keep and mutate
   /// its own list. Changing the data animates over [transitionDuration]:
-  /// snakes stretch and shrink in place rather than being torn down.
-  const WovenRing({
+  /// segments stretch and shrink in place rather than being torn down. The
+  /// first data to arrive plays [animation] instead.
+  const WovenRingChart({
     super.key,
-    required this.snakes,
+    required this.segments,
     this.style = const WovenRingStyle(),
-    this.intro = WovenRingIntro.relay,
-    this.introDuration = const Duration(milliseconds: 1000),
+    this.animation = WovenRingAnimation.sweep,
+    this.animationDuration = const Duration(milliseconds: 1000),
     this.transitionDuration = const Duration(milliseconds: 450),
     this.center,
-    this.highlighted,
+    this.highlightedIndex,
     this.highlightBorder = const WovenBorder(),
     this.controller,
     this.semanticLabel,
     this.semanticValue,
-  }) : _mode = WovenRingMode.data;
+  }) : _mode = WovenRingChartMode.data;
 
-  /// A flat neutral ring at low opacity. Same band width, no joints.
-  const WovenRing.empty({
-    super.key,
-    this.style = const WovenRingStyle(),
-    this.center,
-    this.semanticLabel,
-    this.semanticValue,
-  }) : snakes = const <WovenSnake>[],
-       intro = WovenRingIntro.none,
-       introDuration = Duration.zero,
-       transitionDuration = Duration.zero,
-       highlighted = null,
-       highlightBorder = const WovenBorder(),
-       controller = null,
-       _mode = WovenRingMode.empty;
-
-  /// A single neutral snake chasing itself around the track.
-  const WovenRing.loading({
-    super.key,
-    this.style = const WovenRingStyle(),
-    this.center,
-    this.semanticLabel,
-    this.semanticValue,
-  }) : snakes = const <WovenSnake>[],
-       intro = WovenRingIntro.none,
-       introDuration = const Duration(milliseconds: 1400),
-       transitionDuration = Duration.zero,
-       highlighted = null,
-       highlightBorder = const WovenBorder(),
-       controller = null,
-       _mode = WovenRingMode.loading;
-
-  /// The segments, in the order they are laid round the ring.
+  /// A flat neutral ring at low opacity, with no joints.
   ///
-  /// Order is kept exactly as given: the component never sorts or rebalances
-  /// for looks. Each snake is drawn over the one before it, so the last one
-  /// laps the first at the seam.
-  final List<WovenSnake> snakes;
+  /// Same diameter and thickness as a chart with data.
+  const WovenRingChart.empty({
+    super.key,
+    this.style = const WovenRingStyle(),
+    this.center,
+    this.semanticLabel,
+    this.semanticValue,
+  }) : segments = const <WovenSegment>[],
+       animation = WovenRingAnimation.none,
+       animationDuration = Duration.zero,
+       transitionDuration = Duration.zero,
+       highlightedIndex = null,
+       highlightBorder = const WovenBorder(),
+       controller = null,
+       _mode = WovenRingChartMode.empty;
 
-  /// Proportions, direction, gradient axis, and the surface the ring sits on.
+  /// A single neutral segment chasing itself around the track.
+  ///
+  /// Same diameter and thickness as a chart with data. A [semanticLabel] or a
+  /// [semanticValue] is what makes the chart announce itself as a live region
+  /// while it is loading; with neither, it publishes no semantics at all.
+  const WovenRingChart.loading({
+    super.key,
+    this.style = const WovenRingStyle(),
+    this.center,
+    this.semanticLabel,
+    this.semanticValue,
+  }) : segments = const <WovenSegment>[],
+       animation = WovenRingAnimation.none,
+       animationDuration = const Duration(milliseconds: 1400),
+       transitionDuration = Duration.zero,
+       highlightedIndex = null,
+       highlightBorder = const WovenBorder(),
+       controller = null,
+       _mode = WovenRingChartMode.loading;
+
+  /// The segments, in the order they are laid around the ring.
+  ///
+  /// Order is kept exactly as given: the chart never sorts or rebalances for
+  /// looks. Each segment is drawn over the one before it, so the last one laps
+  /// the first at the seam. Values are normalized against each other, so
+  /// percentages, counts, and currency all work.
+  final List<WovenSegment> segments;
+
+  /// Proportions, direction, colours, and policies. Everything that is not
+  /// data.
+  ///
+  /// A new style takes effect on the next frame. Changing the resolved
+  /// thickness or the small-value policy also re-runs the rules that turn
+  /// values into shares of the ring, so the segments animate to their new
+  /// shares over [transitionDuration]; every other field simply repaints.
   final WovenRingStyle style;
 
-  /// How the ring draws itself the first time it appears.
-  final WovenRingIntro intro;
+  /// How the chart draws itself the first time it appears.
+  ///
+  /// It runs again whenever a chart that had nothing to draw is given data: a
+  /// chart built with an empty list waits, finished, until values arrive and
+  /// then draws itself. Every other data change animates in place over
+  /// [transitionDuration] instead.
+  final WovenRingAnimation animation;
 
-  /// How long [intro] takes.
-  final Duration introDuration;
+  /// How long [animation] takes. One second by default.
+  final Duration animationDuration;
 
-  /// On data change snakes stretch and shrink in place and colours crossfade.
-  /// Nothing disappears and gets redrawn; the ring never blinks.
+  /// How long a data change takes. 450ms by default.
+  ///
+  /// Segments stretch and shrink in place and colours crossfade; nothing is
+  /// torn down and rebuilt, so the chart never blinks. Changing the data again
+  /// mid-transition picks up from the frame already on screen.
   final Duration transitionDuration;
 
-  /// Optically centred, with real breathing room from the band.
+  /// A widget shown in the ring's hole, optically centred with real breathing
+  /// room from the ring itself.
+  ///
+  /// It is laid out in a centred square that clears the ring on every side:
+  /// about 57 percent of [WovenRingGeometry.holeDiameter], which is roughly a
+  /// third of the chart at the default thickness. A larger widget is
+  /// constrained to that square, not to the whole hole.
   final Widget? center;
 
-  /// Gives one snake a border while the others stay unbordered.
+  /// Index into [segments] of the one segment to highlight, or null for none.
   ///
-  /// The index is into [snakes]. It replaces that snake's own border for as
-  /// long as it is set.
-  final int? highlighted;
+  /// The highlighted segment takes [highlightBorder] in place of its own
+  /// border for as long as this is set. An index outside the list highlights
+  /// nothing and is not an error.
+  final int? highlightedIndex;
 
-  /// The border the [highlighted] snake takes.
+  /// The border given to the segment at [highlightedIndex].
   final WovenBorder highlightBorder;
 
-  /// Replays the intro on demand. The caller owns it and must dispose it.
-  final WovenRingController? controller;
-
-  /// Localized aggregate accessibility text for the chart.
+  /// Replays [animation] on demand.
   ///
-  /// Without one, the labels of every visible snake are joined instead.
+  /// The caller owns the controller and must dispose it.
+  final WovenRingChartController? controller;
+
+  /// Localized accessibility text describing the chart as a whole.
+  ///
+  /// Without one, the labels of every segment carrying a positive value are
+  /// joined instead, in order; a segment the small-value policy dropped still
+  /// contributes its label. A chart with none of this, [semanticValue], or a
+  /// segment label publishes no semantics of its own.
+  ///
   /// Setting either this or [semanticValue] means the caller has described the
   /// whole chart, so [center] is hidden from assistive technology to avoid
   /// reading the same number twice.
@@ -146,57 +175,58 @@ class WovenRing extends StatefulWidget {
   /// Localized value text for the chart, such as the total the centre shows.
   final String? semanticValue;
 
-  final WovenRingMode _mode;
+  final WovenRingChartMode _mode;
 
   @override
-  State<WovenRing> createState() => _WovenRingState();
+  State<WovenRingChart> createState() => _WovenRingChartState();
 }
 
 @immutable
 class _WovenFrame {
   const _WovenFrame({
-    required this.snakes,
+    required this.segments,
     required this.fractions,
     this.topologyMerge = 0.0,
     this.topologyAnchor,
   });
 
-  final List<WovenSnake> snakes;
+  final List<WovenSegment> segments;
   final List<double> fractions;
   final double topologyMerge;
   final int? topologyAnchor;
 
   _WovenFrame withTopology(double merge, int? anchor) => _WovenFrame(
-    snakes: snakes,
+    segments: segments,
     fractions: fractions,
     topologyMerge: merge,
     topologyAnchor: anchor,
   );
 }
 
-class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
-  late final AnimationController _intro;
+class _WovenRingChartState extends State<WovenRingChart>
+    with TickerProviderStateMixin {
+  late final AnimationController _animation;
   late final AnimationController _transition;
   late final AnimationController _spin;
   late Listenable _repaint;
 
   _WovenFrame _fromFrame = const _WovenFrame(
-    snakes: <WovenSnake>[],
+    segments: <WovenSegment>[],
     fractions: <double>[],
   );
   _WovenFrame _toFrame = const _WovenFrame(
-    snakes: <WovenSnake>[],
+    segments: <WovenSegment>[],
     fractions: <double>[],
   );
-  List<WovenSnake> _inputSnapshot = const <WovenSnake>[];
+  List<WovenSegment> _inputSnapshot = const <WovenSegment>[];
   bool _disableAnimations = false;
 
   @override
   void initState() {
     super.initState();
-    _intro = AnimationController(
+    _animation = AnimationController(
       vsync: this,
-      duration: _safeDuration(widget.introDuration),
+      duration: _safeDuration(widget.animationDuration),
     );
     _transition = AnimationController(
       vsync: this,
@@ -206,18 +236,19 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-    _repaint = Listenable.merge(<Listenable>[_intro, _transition, _spin]);
+    _repaint = Listenable.merge(<Listenable>[_animation, _transition, _spin]);
 
-    _inputSnapshot = _snapshot(widget.snakes);
+    _inputSnapshot = _snapshot(widget.segments);
     _fromFrame = _resolveFrame(_inputSnapshot, widget.style);
     _toFrame = _fromFrame;
 
-    if (widget._mode == WovenRingMode.loading) {
+    if (widget._mode == WovenRingChartMode.loading) {
       _spin.repeat();
-    } else if (widget.intro == WovenRingIntro.none || _inputSnapshot.isEmpty) {
-      _intro.value = 1;
+    } else if (widget.animation == WovenRingAnimation.none ||
+        _inputSnapshot.isEmpty) {
+      _animation.value = 1;
     } else {
-      _intro.forward();
+      _animation.forward();
     }
     widget.controller?.addListener(_replay);
   }
@@ -230,43 +261,46 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
     if (_disableAnimations == disable) return;
     _disableAnimations = disable;
     if (disable) {
-      _intro.value = 1.0;
+      _animation.value = 1.0;
       _transition.value = 1.0;
       _spin.stop();
-    } else if (widget._mode == WovenRingMode.loading && !_spin.isAnimating) {
+    } else if (widget._mode == WovenRingChartMode.loading &&
+        !_spin.isAnimating) {
       _spin.repeat();
     }
   }
 
   @override
-  void didUpdateWidget(WovenRing old) {
+  void didUpdateWidget(WovenRingChart old) {
     super.didUpdateWidget(old);
     if (old.controller != widget.controller) {
       old.controller?.removeListener(_replay);
       widget.controller?.addListener(_replay);
     }
-    _intro.duration = _safeDuration(widget.introDuration);
+    _animation.duration = _safeDuration(widget.animationDuration);
     _transition.duration = _safeDuration(widget.transitionDuration);
 
-    if (widget._mode == WovenRingMode.loading &&
+    if (widget._mode == WovenRingChartMode.loading &&
         !_disableAnimations &&
         !_spin.isAnimating) {
       _spin.repeat();
-    } else if (widget._mode != WovenRingMode.loading && _spin.isAnimating) {
+    } else if (widget._mode != WovenRingChartMode.loading &&
+        _spin.isAnimating) {
       _spin.stop();
     }
 
-    final List<WovenSnake> nextSnapshot = _snapshot(widget.snakes);
+    final List<WovenSegment> nextSnapshot = _snapshot(widget.segments);
     final bool dataChanged = !listEquals(_inputSnapshot, nextSnapshot);
     final bool fractionRulesChanged =
-        old.style.resolvedBandFraction != widget.style.resolvedBandFraction ||
-        old.style.minimumPolicy != widget.style.minimumPolicy;
+        old.style.resolvedThicknessFraction !=
+            widget.style.resolvedThicknessFraction ||
+        old.style.smallValuePolicy != widget.style.smallValuePolicy;
     if (dataChanged || fractionRulesChanged) {
       final _WovenFrame current = _currentFrame();
       final bool hadData = current.fractions.any(
         (double fraction) => fraction > 1e-12,
       );
-      final bool hasData = nextSnapshot.any((WovenSnake s) => s.value > 0.0);
+      final bool hasData = nextSnapshot.any((WovenSegment s) => s.value > 0.0);
       _inputSnapshot = nextSnapshot;
       final _WovenFrame next = _resolveFrame(nextSnapshot, widget.style);
 
@@ -274,10 +308,11 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
         _fromFrame = next;
         _toFrame = next;
         _transition.value = 1.0;
-        if (!_disableAnimations && widget.intro != WovenRingIntro.none) {
-          _intro.forward(from: 0.0);
+        if (!_disableAnimations &&
+            widget.animation != WovenRingAnimation.none) {
+          _animation.forward(from: 0.0);
         } else {
-          _intro.value = 1.0;
+          _animation.value = 1.0;
         }
       } else {
         final List<int> currentActive = <int>[
@@ -302,8 +337,8 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
           // Retargeting an in-flight many-to-single transition must keep the
           // anchor that is already on screen. Switching it immediately changes
           // the canonical overlay before animation time advances. If the
-          // requested sole snake did not exist in the current data, use a
-          // visible current snake and morph its visual style to the destination.
+          // requested sole segment did not exist in the current data, use a
+          // visible current segment and morph its visual style to the destination.
           final int anchor = currentActive.contains(requestedAnchor)
               ? requestedAnchor
               : currentActive.first;
@@ -322,24 +357,26 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
       }
     }
 
-    if (old.intro != widget.intro && !_intro.isAnimating) {
-      _intro.value = widget.intro == WovenRingIntro.none ? 1.0 : _intro.value;
+    if (old.animation != widget.animation && !_animation.isAnimating) {
+      _animation.value = widget.animation == WovenRingAnimation.none
+          ? 1.0
+          : _animation.value;
     }
   }
 
   void _replay() {
-    if (widget.intro == WovenRingIntro.none) return;
+    if (widget.animation == WovenRingAnimation.none) return;
     if (_disableAnimations) {
-      _intro.value = 1.0;
+      _animation.value = 1.0;
     } else {
-      _intro.forward(from: 0.0);
+      _animation.forward(from: 0.0);
     }
   }
 
   @override
   void dispose() {
     widget.controller?.removeListener(_replay);
-    _intro.dispose();
+    _animation.dispose();
     _transition.dispose();
     _spin.dispose();
     super.dispose();
@@ -355,25 +392,28 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
     }
     if (_transition.value <= 0.0) return _fromFrame;
 
-    final int n = math.max(_fromFrame.snakes.length, _toFrame.snakes.length);
+    final int n = math.max(
+      _fromFrame.segments.length,
+      _toFrame.segments.length,
+    );
     final _WovenFrame from = _padFrame(_fromFrame, n);
     final _WovenFrame to = _padFrame(_toFrame, n);
     final double t = Curves.easeInOut.transform(_transition.value);
-    final List<WovenSnake> snakes = <WovenSnake>[];
+    final List<WovenSegment> segments = <WovenSegment>[];
     final List<double> fractions = <double>[];
 
     for (var i = 0; i < n; i++) {
-      WovenSnake a = from.snakes[i];
-      WovenSnake b = to.snakes[i];
+      WovenSegment a = from.segments[i];
+      WovenSegment b = to.segments[i];
       if (from.fractions[i] <= 1e-12 && to.fractions[i] > 1e-12) {
-        a = WovenSnake(
+        a = WovenSegment(
           value: 0,
           fill: _neighborFill(from, i),
           semanticLabel: a.semanticLabel,
         );
       }
       if (to.fractions[i] <= 1e-12 && from.fractions[i] > 1e-12) {
-        WovenSnake? topologyDestination;
+        WovenSegment? topologyDestination;
         if (to.topologyMerge > 0.0 && from.topologyAnchor == i) {
           for (
             var destination = 0;
@@ -381,12 +421,12 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
             destination++
           ) {
             if (to.fractions[destination] > 1e-12) {
-              topologyDestination = to.snakes[destination];
+              topologyDestination = to.segments[destination];
               break;
             }
           }
         }
-        b = WovenSnake(
+        b = WovenSegment(
           value: 0,
           fill: topologyDestination?.fill ?? _neighborFill(to, i),
           border: topologyDestination?.border,
@@ -394,7 +434,9 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
           opacity: topologyDestination?.opacity ?? 1.0,
         );
       }
-      snakes.add(WovenSnake.lerp(a, b, t, surface: widget.style.surface));
+      segments.add(
+        WovenSegment.lerp(a, b, t, surfaceColor: widget.style.surfaceColor),
+      );
       fractions.add(
         from.fractions[i] + (to.fractions[i] - from.fractions[i]) * t,
       );
@@ -411,7 +453,7 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
         (to.topologyMerge - from.topologyMerge) * topologyT;
 
     return _WovenFrame(
-      snakes: List<WovenSnake>.unmodifiable(snakes),
+      segments: List<WovenSegment>.unmodifiable(segments),
       fractions: List<double>.unmodifiable(fractions),
       topologyMerge: topologyMerge,
       topologyAnchor: from.topologyAnchor ?? to.topologyAnchor,
@@ -419,19 +461,19 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
   }
 
   static _WovenFrame _resolveFrame(
-    List<WovenSnake> snakes,
+    List<WovenSegment> segments,
     WovenRingStyle style,
   ) {
-    final double band = style.resolvedBandFraction;
-    final double capToTrack = band / (1 - band);
+    final double thickness = style.resolvedThicknessFraction;
+    final double capToTrack = thickness / (1 - thickness);
     final double minimum = math.asin(capToTrack.clamp(0.0, 1.0)) / math.pi;
     return _WovenFrame(
-      snakes: List<WovenSnake>.unmodifiable(snakes),
+      segments: List<WovenSegment>.unmodifiable(segments),
       fractions: List<double>.unmodifiable(
-        wovenFractions(
-          <double>[for (final WovenSnake snake in snakes) snake.value],
+        wovenSegmentFractions(
+          <double>[for (final WovenSegment segment in segments) segment.value],
           minimumFraction: minimum,
-          policy: style.minimumPolicy,
+          policy: style.smallValuePolicy,
         ),
       ),
     );
@@ -441,15 +483,15 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
   /// opacity. Their geometry grows or shrinks from zero, so fading them over a
   /// neutral track would only create a background flash.
   static _WovenFrame _padFrame(_WovenFrame frame, int n) {
-    if (frame.snakes.length >= n) return frame;
-    final WovenFill fill = frame.snakes.isEmpty
+    if (frame.segments.length >= n) return frame;
+    final WovenFill fill = frame.segments.isEmpty
         ? const WovenFill.solid(WovenPalette.neutral)
-        : frame.snakes.last.fill;
+        : frame.segments.last.fill;
     return _WovenFrame(
-      snakes: List<WovenSnake>.unmodifiable(<WovenSnake>[
-        ...frame.snakes,
-        for (var i = frame.snakes.length; i < n; i++)
-          WovenSnake(value: 0, fill: fill),
+      segments: List<WovenSegment>.unmodifiable(<WovenSegment>[
+        ...frame.segments,
+        for (var i = frame.segments.length; i < n; i++)
+          WovenSegment(value: 0, fill: fill),
       ]),
       fractions: List<double>.unmodifiable(<double>[
         ...frame.fractions,
@@ -461,24 +503,28 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
   }
 
   static WovenFill _neighborFill(_WovenFrame frame, int index) {
-    final int n = frame.snakes.length;
+    final int n = frame.segments.length;
     if (n == 0) return const WovenFill.solid(WovenPalette.neutral);
     for (var offset = 1; offset <= n; offset++) {
       final int candidate = (index - offset + n) % n;
       if (frame.fractions[candidate] > 1e-12) {
-        return frame.snakes[candidate].fill;
+        return frame.segments[candidate].fill;
       }
     }
-    return frame.snakes[index.clamp(0, n - 1)].fill;
+    return frame.segments[index.clamp(0, n - 1)].fill;
   }
 
-  static List<WovenSnake> _snapshot(List<WovenSnake> source) {
-    return List<WovenSnake>.unmodifiable(<WovenSnake>[
-      for (final WovenSnake snake in source)
-        snake.copyWith(
-          value: snake.value.isFinite && snake.value > 0.0 ? snake.value : 0.0,
-          opacity: snake.value.isFinite && snake.value > 0.0
-              ? (snake.opacity.isFinite ? snake.opacity.clamp(0.0, 1.0) : 1.0)
+  static List<WovenSegment> _snapshot(List<WovenSegment> source) {
+    return List<WovenSegment>.unmodifiable(<WovenSegment>[
+      for (final WovenSegment segment in source)
+        segment.copyWith(
+          value: segment.value.isFinite && segment.value > 0.0
+              ? segment.value
+              : 0.0,
+          opacity: segment.value.isFinite && segment.value > 0.0
+              ? (segment.opacity.isFinite
+                    ? segment.opacity.clamp(0.0, 1.0)
+                    : 1.0)
               : 0.0,
         ),
     ]);
@@ -489,19 +535,19 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final List<String> snakeLabels = <String>[
-      for (final WovenSnake snake in _inputSnapshot)
-        if (snake.value > 0.0 && snake.semanticLabel != null)
-          snake.semanticLabel!,
+    final List<String> segmentLabels = <String>[
+      for (final WovenSegment segment in _inputSnapshot)
+        if (segment.value > 0.0 && segment.semanticLabel != null)
+          segment.semanticLabel!,
     ];
     final String? label =
         widget.semanticLabel ??
-        (snakeLabels.isEmpty ? null : snakeLabels.join(', '));
+        (segmentLabels.isEmpty ? null : segmentLabels.join(', '));
     final bool hasAggregateSemantics =
         label != null || widget.semanticValue != null;
     // The centre is hidden from assistive tech only when the caller has given
     // the ring its own description, because that description is written to
-    // stand for the whole chart. Per-snake labels describe segments and say
+    // stand for the whole chart. Per-segment labels describe segments and say
     // nothing about the centre, so they must not silence it: labelling your
     // data should never remove the total from the accessibility tree.
     final bool centreIsDescribedByRing =
@@ -520,7 +566,7 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
           Size(side, side),
           widget.style,
         );
-        // Nothing closer to the band than about 10% of the hole's diameter.
+        // Nothing closer to the thickness than about 10% of the hole's diameter.
         final double centreBox = g.holeDiameter * 0.8 / math.sqrt2;
 
         // Built once per layout, not once per tick. Loading spins forever, so
@@ -553,19 +599,19 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
                   fit: StackFit.expand,
                   children: <Widget>[
                     CustomPaint(
-                      painter: WovenRingPainter(
-                        snakes: frame.snakes,
+                      painter: WovenRingChartPainter(
+                        segments: frame.segments,
                         fractions: frame.fractions,
                         style: widget.style,
                         mode: widget._mode,
-                        intro: widget.intro,
+                        animation: widget.animation,
                         // Soft in, soft out. No bounce, no overshoot: the ring
                         // is being drawn, not thrown.
-                        introProgress: Curves.easeInOutCubic.transform(
-                          _intro.value,
+                        animationProgress: Curves.easeInOutCubic.transform(
+                          _animation.value,
                         ),
                         spin: _spin.value,
-                        highlighted: widget.highlighted,
+                        highlightedIndex: widget.highlightedIndex,
                         highlightBorder: widget.highlightBorder,
                         topologyMerge: frame.topologyMerge,
                         topologyAnchor: frame.topologyAnchor,
@@ -598,7 +644,7 @@ class _WovenRingState extends State<WovenRing> with TickerProviderStateMixin {
         image: true,
         label: label,
         value: widget.semanticValue,
-        liveRegion: widget._mode == WovenRingMode.loading,
+        liveRegion: widget._mode == WovenRingChartMode.loading,
         child: result,
       );
     }

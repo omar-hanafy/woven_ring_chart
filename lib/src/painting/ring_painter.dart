@@ -3,41 +3,48 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 
-import 'enums.dart';
-import 'geometry.dart';
-import 'palette.dart';
-import 'snake.dart';
-import 'style.dart';
+import '../geometry/ring_geometry.dart';
+import '../geometry/segment_extent.dart';
+import '../model/animation.dart';
+import '../model/border.dart';
+import '../model/chart_mode.dart';
+import '../model/fill.dart';
+import '../model/gradient.dart';
+import '../model/palette.dart';
+import '../model/policy.dart';
+import '../model/segment.dart';
+import '../model/shadow.dart';
+import '../model/style.dart';
 
 /// Draws one frame of a woven ring.
 ///
 /// The painter is told exactly what to draw. It does not normalize data, run
-/// the minimum policy, or own any animation: it is handed a snake list, the
-/// fractions those snakes occupy, and the progress values for the frame. That
+/// the minimum policy, or own any animation: it is handed a segment list, the
+/// fractions those segments occupy, and the progress values for the frame. That
 /// is what lets a transition interpolate fractions directly instead of
 /// re-running a nonlinear policy on every tick.
-class WovenRingPainter extends CustomPainter {
-  /// Creates a painter for one frame. The snake and fraction lists are copied,
+class WovenRingChartPainter extends CustomPainter {
+  /// Creates a painter for one frame. The segment and fraction lists are copied,
   /// so a caller can keep mutating its own.
-  WovenRingPainter({
-    required List<WovenSnake> snakes,
+  WovenRingChartPainter({
+    required List<WovenSegment> segments,
     required List<double> fractions,
     required this.style,
     required this.mode,
-    required this.intro,
-    required this.introProgress,
+    required this.animation,
+    required this.animationProgress,
     required this.spin,
-    required this.highlighted,
+    required this.highlightedIndex,
     required this.highlightBorder,
     required this.topologyMerge,
     required this.topologyAnchor,
-  }) : snakes = List<WovenSnake>.unmodifiable(snakes),
+  }) : segments = List<WovenSegment>.unmodifiable(segments),
        fractions = List<double>.unmodifiable(fractions);
 
-  /// The snakes to draw, in data order.
-  final List<WovenSnake> snakes;
+  /// The segments to draw, in data order.
+  final List<WovenSegment> segments;
 
-  /// Each snake's share of the ring, parallel to [snakes] and already through
+  /// Each segment's share of the ring, parallel to [segments] and already through
   /// the minimum policy.
   final List<double> fractions;
 
@@ -45,23 +52,23 @@ class WovenRingPainter extends CustomPainter {
   final WovenRingStyle style;
 
   /// Which of the three renderings to produce.
-  final WovenRingMode mode;
+  final WovenRingChartMode mode;
 
-  /// Which intro [introProgress] is driving.
-  final WovenRingIntro intro;
+  /// Which animation [animationProgress] is driving.
+  final WovenRingAnimation animation;
 
-  /// Intro completion from 0 to 1, already eased.
-  final double introProgress;
+  /// Animation completion from 0 to 1, already eased.
+  final double animationProgress;
 
   /// Phase of the loading sweep, from 0 to 1. Ignored outside
-  /// [WovenRingMode.loading].
+  /// [WovenRingChartMode.loading].
   final double spin;
 
-  /// Index of the snake that takes [highlightBorder] instead of its own, or
+  /// Index of the segment that takes [highlightBorder] instead of its own, or
   /// null.
-  final int? highlighted;
+  final int? highlightedIndex;
 
-  /// The border given to the [highlighted] snake.
+  /// The border given to the [highlightedIndex] segment.
   final WovenBorder highlightBorder;
 
   /// How far the canonical single ring has emerged over the woven layer, from
@@ -69,7 +76,7 @@ class WovenRingPainter extends CustomPainter {
   /// flight.
   final double topologyMerge;
 
-  /// The snake that owns the whole ring at either end of that handoff.
+  /// The segment that owns the whole ring at either end of that handoff.
   final int? topologyAnchor;
 
   static const double _tau = math.pi * 2;
@@ -80,13 +87,13 @@ class WovenRingPainter extends CustomPainter {
     if (g.outerRadius <= 0.0 || g.trackRadius <= 0.0) return;
 
     switch (mode) {
-      case WovenRingMode.empty:
+      case WovenRingChartMode.empty:
         canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
         break;
-      case WovenRingMode.loading:
+      case WovenRingChartMode.loading:
         _paintLoading(canvas, g);
         break;
-      case WovenRingMode.data:
+      case WovenRingChartMode.data:
         _paintRing(canvas, g);
         break;
     }
@@ -94,7 +101,7 @@ class WovenRingPainter extends CustomPainter {
 
   // -- states ---------------------------------------------------------------
 
-  /// The neutral at low opacity, premultiplied so the component doesn't depend
+  /// The neutral at low opacity, premultiplied so the package does not depend
   /// on which Flutter version's colour API is available.
   static const Color _emptyTrack = Color(0x8CDBD8D1);
   static const Color _loadingTrack = Color(0x4DDBD8D1);
@@ -104,7 +111,7 @@ class WovenRingPainter extends CustomPainter {
     final double direction = style.clockwise ? 1.0 : -1.0;
     final double from = style.resolvedStartAngle + direction * spin * _tau;
     canvas.drawPath(
-      g.snakePath(
+      g.segmentPath(
         from,
         from + direction * _tau * 0.20,
         clockwise: style.clockwise,
@@ -114,7 +121,7 @@ class WovenRingPainter extends CustomPainter {
   }
 
   void _paintRing(Canvas canvas, WovenRingGeometry g) {
-    final int n = snakes.length;
+    final int n = segments.length;
     if (n == 0) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
       return;
@@ -136,11 +143,11 @@ class WovenRingPainter extends CustomPainter {
     );
     final bool fadesToEmpty = fractionTotal < 0.999;
     if (fadesToEmpty ||
-        snakes.any((WovenSnake snake) => snake.opacity < 0.999)) {
+        segments.any((WovenSegment segment) => segment.opacity < 0.999)) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
     }
     if (fadesToEmpty) {
-      // A shrinking snake still has a full round cap at an arbitrarily small
+      // A shrinking segment still has a full round cap at an arbitrarily small
       // fraction. Fade the complete woven layer with its remaining coverage so
       // those final subpixel caps dissolve into the neutral empty track rather
       // than popping away on the last frame.
@@ -154,32 +161,33 @@ class WovenRingPainter extends CustomPainter {
       );
     }
 
-    final List<WovenSnakeExtent> extents = g.extents(
+    final List<WovenSegmentExtent> extents = g.extents(
       fractions,
       style.resolvedStartAngle,
       clockwise: style.clockwise,
     );
     final double direction = style.clockwise ? 1.0 : -1.0;
 
-    // The relay: one head, one turn, colours handing over at each boundary.
+    // The sweep: one head, one turn, colours handing over at each boundary.
     double tip = 0.0;
-    if (intro == WovenRingIntro.relay) {
+    if (animation == WovenRingAnimation.sweep) {
       tip =
-          extents.first.start + direction * (g.capAngle + introProgress * _tau);
+          extents.first.start +
+          direction * (g.capAngle + animationProgress * _tau);
     }
 
     if (active.length == 1) {
       final int index = active.single;
-      final bool introComplete =
-          intro == WovenRingIntro.none || introProgress >= 1.0;
-      if (introComplete) {
+      final bool animationComplete =
+          animation == WovenRingAnimation.none || animationProgress >= 1.0;
+      if (animationComplete) {
         _paintSmoothSingle(canvas, g, index, extents[index].start);
-        if (style.singleSnakeStyle == WovenSingleSnakeStyle.jointed) {
+        if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
           _paintSingleJoint(
             canvas,
             g,
             extents[index].start,
-            snakes[index].opacity,
+            segments[index].opacity,
           );
         }
         if (fadesToEmpty) canvas.restore();
@@ -197,7 +205,7 @@ class WovenRingPainter extends CustomPainter {
         clockwise: style.clockwise,
       );
       if (!visibleEnd.isNaN) {
-        _paintSnake(
+        _paintSegment(
           canvas,
           g,
           index,
@@ -211,11 +219,11 @@ class WovenRingPainter extends CustomPainter {
       return;
     }
 
-    // A direct one-to-many interpolation briefly leaves the surviving snake
+    // A direct one-to-many interpolation briefly leaves the surviving segment
     // at or above one full turn while the new heads are being born. Crossfade
-    // that topological handoff from the exact one-snake rendering to the woven
+    // that topological handoff from the exact one-segment rendering to the woven
     // rendering across the overlap-depth interval. This keeps gradients,
-    // borders, lift, and the single self-joint continuous without changing the
+    // borders, shadow, and the single self-joint continuous without changing the
     // logical fractions or their endpoint proportions.
     final int anchorPosition = topologyAnchor == null
         ? -1
@@ -224,9 +232,9 @@ class WovenRingPainter extends CustomPainter {
     final double resolvedTopologyMerge = topologyMerge.isFinite
         ? topologyMerge.clamp(0.0, 1.0)
         : 0.0;
-    // Keep one stable data-order sequence through the entire intro and every
+    // Keep one stable data-order sequence through the entire animation and every
     // transition. A base fill guarantees antialiased coverage. Exact cyclic
-    // owner masks then repaint each visible snake everywhere its successor is
+    // owner masks then repaint each visible segment everywhere its successor is
     // absent. In any contiguous overlap run that leaves only the furthest
     // successor visible, so both possible three-way seam overlaps obey the
     // same successor > current > predecessor rule.
@@ -247,7 +255,7 @@ class WovenRingPainter extends CustomPainter {
       for (var position = 0; position < paintOrder.length; position++)
         visibleEnds[position].isNaN
             ? null
-            : g.snakePath(
+            : g.segmentPath(
                 extents[paintOrder[position]].start,
                 visibleEnds[position],
                 clockwise: style.clockwise,
@@ -268,44 +276,44 @@ class WovenRingPainter extends CustomPainter {
             ),
           ),
     ];
-    // One overlap depth of each snake's own body, measured from its head. This
+    // One overlap depth of each segment's own body, measured from its head. This
     // is the ground a head takes from its predecessor, and it is the part of
     // the weave the successor mask cannot state on its own. That mask says
     // "paint me where my successor is absent", which has no answer when a pixel
-    // is covered by the whole cycle at once: three snakes closing around a
-    // short one, or two whose joints have merged. Every snake is then excluded
+    // is covered by the whole cycle at once: three segments closing around a
+    // short one, or two whose joints have merged. Every segment is then excluded
     // by its own successor, nothing is painted, and whatever the underlay left
     // there shows through.
     final List<Path?> laps = <Path?>[
       for (var position = 0; position < paintOrder.length; position++)
         visiblePaths[position] == null
             ? null
-            : g.snakePath(
+            : g.segmentPath(
                 extents[paintOrder[position]].start,
                 extents[paintOrder[position]].start + direction * g.jointLag,
                 clockwise: style.clockwise,
               ),
     ];
 
-    // Coverage underlay. Borders and lift are deliberately omitted: covered
+    // Coverage underlay. Borders and shadow are deliberately omitted: covered
     // tails have neither, even while their successor is translucent.
     for (var position = 0; position < paintOrder.length; position++) {
       final int i = paintOrder[position];
       final double end = visibleEnds[position];
       if (end.isNaN) continue;
-      _paintSnake(
+      _paintSegment(
         canvas,
         g,
         i,
         extents[i].start,
         end,
         shaderEnd: extents[i].end,
-        paintLift: false,
+        paintShadow: false,
         paintBorder: false,
       );
     }
 
-    // Paint each top owner. The masks are independent of paint order, so relay
+    // Paint each top owner. The masks are independent of paint order, so sweep
     // completion and data transitions cannot swap the seam on the final frame.
     for (var position = 0; position < paintOrder.length; position++) {
       final Path? path = visiblePaths[position];
@@ -318,17 +326,17 @@ class WovenRingPainter extends CustomPainter {
       if (outsideSuccessor != null) {
         canvas.clipPath(outsideSuccessor, doAntiAlias: false);
       }
-      if (_isTranslucent(snakes[i])) {
+      if (_isTranslucent(segments[i])) {
         _paintSurface(canvas, path);
       }
-      _paintSnake(
+      _paintSegment(
         canvas,
         g,
         i,
         extents[i].start,
         visibleEnds[position],
         shaderEnd: extents[i].end,
-        paintLift: false,
+        paintShadow: false,
         paintBorder: false,
       );
       canvas.restore();
@@ -336,7 +344,7 @@ class WovenRingPainter extends CustomPainter {
 
     // When every active path covers the same pixel, cyclic pairwise ordering
     // has no mathematical winner. This occurs only during the saturated
-    // one-to-many handoff. Keep the surviving full-turn snake as an explicit
+    // one-to-many handoff. Keep the surviving full-turn segment as an explicit
     // cycle anchor instead of exposing whichever underlay index painted last.
     final bool anchorIsSaturated =
         cycleAnchorPosition != null &&
@@ -354,17 +362,17 @@ class WovenRingPainter extends CustomPainter {
       for (final Path? path in visiblePaths) {
         canvas.clipPath(path!, doAntiAlias: false);
       }
-      if (_isTranslucent(snakes[anchor])) {
+      if (_isTranslucent(segments[anchor])) {
         _paintSurface(canvas, anchorPath);
       }
-      _paintSnake(
+      _paintSegment(
         canvas,
         g,
         anchor,
         extents[anchor].start,
         visibleEnds[anchorPosition],
         shaderEnd: extents[anchor].end,
-        paintLift: false,
+        paintShadow: false,
         paintBorder: false,
       );
       canvas.restore();
@@ -375,10 +383,10 @@ class WovenRingPainter extends CustomPainter {
     // is what the successor mask already says at every joint it can express.
     //
     // The lap is the head's whole ground, not just its round cap. A cap disc is
-    // tangent to both edges of the band, so clipping to it would leave the
+    // tangent to both edges of the ring, so clipping to it would leave the
     // predecessor's tail on top along the outer and inner edges: the head would
     // read as a detached circle with the older colour arcing over it. One
-    // overlap depth of the snake's own body is exactly the span from this
+    // overlap depth of the segment's own body is exactly the span from this
     // head's tip to the predecessor's tail tip, which is the whole lens the two
     // silhouettes share at this joint and nothing beyond it.
     void paintLaps({required bool fill}) {
@@ -390,26 +398,26 @@ class WovenRingPainter extends CustomPainter {
         canvas.save();
         canvas.clipPath(path, doAntiAlias: false);
         canvas.clipPath(lap, doAntiAlias: false);
-        if (fill && _isTranslucent(snakes[i])) _paintSurface(canvas, path);
-        _paintSnake(
+        if (fill && _isTranslucent(segments[i])) _paintSurface(canvas, path);
+        _paintSegment(
           canvas,
           g,
           i,
           extents[i].start,
           visibleEnds[position],
           shaderEnd: extents[i].end,
-          paintLift: false,
+          paintShadow: false,
           paintFill: fill,
           paintBorder: !fill,
         );
         canvas.restore();
       }
 
-      // The cyclic closure. Snake zero's head has to lap the last snake's tail
-      // exactly like every other joint, but z-order is linear and snake zero
+      // The cyclic closure. Segment zero's head has to lap the last segment's tail
+      // exactly like every other joint, but z-order is linear and segment zero
       // was laid first, so its head is painted once more at the very top. It
-      // must not out-rank a head that genuinely comes after it: a snake whose
-      // own head sits within one lap ahead of snake zero's is a later joint,
+      // must not out-rank a head that genuinely comes after it: a segment whose
+      // own head sits within one lap ahead of segment zero's is a later joint,
       // not the seam, and keeps its ground.
       if (paintOrder.length < 2) return;
       final Path? firstPath = visiblePaths.first;
@@ -432,17 +440,17 @@ class WovenRingPainter extends CustomPainter {
           canvas.clipPath(_outsidePath(g, otherLap), doAntiAlias: false);
         }
       }
-      if (fill && _isTranslucent(snakes[first])) {
+      if (fill && _isTranslucent(segments[first])) {
         _paintSurface(canvas, firstPath);
       }
-      _paintSnake(
+      _paintSegment(
         canvas,
         g,
         first,
         extents[first].start,
         visibleEnds.first,
         shaderEnd: extents[first].end,
-        paintLift: false,
+        paintShadow: false,
         paintFill: fill,
         paintBorder: !fill,
       );
@@ -451,10 +459,10 @@ class WovenRingPainter extends CustomPainter {
 
     paintLaps(fill: true);
 
-    // A lift is visible only on the predecessor and only where neither the
-    // lifted snake nor its successor covers it. This keeps shadows out of the
-    // hole and prevents a covered head from leaking through a later one.
-    if (style.lift != null) {
+    // A shadow is visible only on the predecessor and only where neither the
+    // segment casting it nor its successor covers it. This keeps shadows out of
+    // the hole and prevents a covered head from leaking through a later one.
+    if (style.shadow != null) {
       final Path outsideRing = _outsidePath(g, g.annulus());
       for (var position = 0; position < paintOrder.length; position++) {
         final Path? path = visiblePaths[position];
@@ -466,8 +474,8 @@ class WovenRingPainter extends CustomPainter {
         final Path? outsideSuccessor =
             outsidePaths[(position + 1) % paintOrder.length];
         final int i = paintOrder[position];
-        final double opacity = snakes[i].opacity.isFinite
-            ? snakes[i].opacity.clamp(0.0, 1.0)
+        final double opacity = segments[i].opacity.isFinite
+            ? segments[i].opacity.clamp(0.0, 1.0)
             : 1.0;
         final Path receiver = Path.combine(
           PathOperation.union,
@@ -476,7 +484,7 @@ class WovenRingPainter extends CustomPainter {
         );
         canvas.save();
         // The tight shadow lands on the predecessor inside the ring and may
-        // breathe just beyond the outer circle. _paintLift applies the hole
+        // breathe just beyond the outer circle. _paintShadow applies the hole
         // mask afterwards, so the exterior allowance can never leak inward.
         canvas.clipPath(receiver, doAntiAlias: false);
         if (outsideCurrent != null) {
@@ -488,7 +496,12 @@ class WovenRingPainter extends CustomPainter {
         final double wovenTopologyOpacity = cycleAnchorPosition == null
             ? 1.0
             : 1.0 - resolvedTopologyMerge;
-        _paintLift(canvas, g, extents[i].start, opacity * wovenTopologyOpacity);
+        _paintShadow(
+          canvas,
+          g,
+          extents[i].start,
+          opacity * wovenTopologyOpacity,
+        );
         canvas.restore();
       }
     }
@@ -505,14 +518,14 @@ class WovenRingPainter extends CustomPainter {
       if (outsideSuccessor != null) {
         canvas.clipPath(outsideSuccessor, doAntiAlias: false);
       }
-      _paintSnake(
+      _paintSegment(
         canvas,
         g,
         i,
         extents[i].start,
         visibleEnds[position],
         shaderEnd: extents[i].end,
-        paintLift: false,
+        paintShadow: false,
         paintFill: false,
       );
       canvas.restore();
@@ -535,12 +548,12 @@ class WovenRingPainter extends CustomPainter {
           ),
       );
       _paintSmoothSingle(canvas, g, anchor, extents[anchor].start);
-      if (style.singleSnakeStyle == WovenSingleSnakeStyle.jointed) {
+      if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
         _paintSingleJoint(
           canvas,
           g,
           extents[anchor].start,
-          snakes[anchor].opacity,
+          segments[anchor].opacity,
         );
       }
       canvas.restore();
@@ -553,7 +566,7 @@ class WovenRingPainter extends CustomPainter {
     ..addRect(Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2))
     ..addPath(path, Offset.zero);
 
-  /// Where snake [i] currently ends, or NaN while it is not yet born.
+  /// Where segment [i] currently ends, or NaN while it is not yet born.
   double _visibleEnd(
     WovenRingGeometry g,
     double a,
@@ -563,9 +576,11 @@ class WovenRingPainter extends CustomPainter {
     double tip, {
     required bool clockwise,
   }) {
-    if (intro == WovenRingIntro.none || introProgress >= 1) return b;
-    if (intro == WovenRingIntro.relay) {
-      // The tip is the leading edge of the growing snake. A new snake is born
+    if (animation == WovenRingAnimation.none || animationProgress >= 1) {
+      return b;
+    }
+    if (animation == WovenRingAnimation.sweep) {
+      // The tip is the leading edge of the growing segment. A new segment is born
       // the instant the tip arrives, as a full round head lying on top of the
       // one before it. This is why the head never looks cut off.
       final double direction = clockwise ? 1.0 : -1.0;
@@ -575,28 +590,31 @@ class WovenRingPainter extends CustomPainter {
       );
       return endAlong < direction * a ? double.nan : direction * endAlong;
     }
-    // Bloom: each snake opens from its own start, staggered by index.
+    // Grow: each segment opens from its own start, staggered by index.
     final double stagger = n <= 1 ? 0.0 : 0.35 / n;
     final double span = 1 - stagger * (n - 1);
-    final double p = ((introProgress - stagger * i) / (span <= 0 ? 1 : span))
-        .clamp(0.0, 1.0);
+    final double p =
+        ((animationProgress - stagger * i) / (span <= 0 ? 1 : span)).clamp(
+          0.0,
+          1.0,
+        );
     if (p <= 0) return double.nan;
     return a + (b - a) * p;
   }
 
-  // -- one snake ------------------------------------------------------------
+  // -- one segment ------------------------------------------------------------
 
-  /// A snake that owns the whole ring. [head] is its drawn start, the same
-  /// angle every other snake's head cap is centred on.
+  /// A segment that owns the whole ring. [head] is its drawn start, the same
+  /// angle every other segment's head cap is centred on.
   void _paintSmoothSingle(
     Canvas canvas,
     WovenRingGeometry g,
     int index,
     double head,
   ) {
-    final WovenSnake snake = snakes[index];
-    final double opacity = snake.opacity.isFinite
-        ? snake.opacity.clamp(0.0, 1.0)
+    final WovenSegment segment = segments[index];
+    final double opacity = segment.opacity.isFinite
+        ? segment.opacity.clamp(0.0, 1.0)
         : 1.0;
     if (opacity <= 0.0) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
@@ -606,37 +624,37 @@ class WovenRingPainter extends CustomPainter {
     final Path ring = g.annulus();
     final Paint fill = Paint()..isAntiAlias = true;
     // A sweep that has to close on itself wraps somewhere, and the wrap is a
-    // straight radial line: the one edge shape this component promises never to
+    // straight radial line: the one edge shape this chart promises never to
     // show. Put the wrap exactly on the head's cap centre so the head's own lap
     // can bury it, the same way a successor's head buries its predecessor's
     // tail at every other joint.
-    final Shader? shader = _closedShaderFor(g, snake.fill, head, opacity);
+    final Shader? shader = _closedShaderFor(g, segment.fill, head, opacity);
     if (shader == null) {
-      fill.color = _withOpacity(snake.fill.head, opacity);
+      fill.color = _withOpacity(segment.fill.head, opacity);
     } else {
       fill.shader = shader;
     }
-    if (_isTranslucent(snake)) _paintSurface(canvas, ring);
+    if (_isTranslucent(segment)) _paintSurface(canvas, ring);
     canvas.drawPath(ring, fill);
 
-    // The lap: one overlap depth of the snake's own body, carrying the head end
+    // The lap: one overlap depth of the segment's own body, carrying the head end
     // of its gradient. Its backward cap is the true semicircle the joint reads
     // as, and it covers the wrap entirely because the wrap sits at its centre.
-    if (!snake.fill.isSolid &&
-        style.gradientAxis == WovenGradientAxis.alongLength) {
+    if (!segment.fill.isSolid &&
+        style.gradientAxis == WovenGradientAxis.alongSegment) {
       // Anchored one cap back, so the lap carries the head end of the gradient
       // right out to the cap tip. A sweep wider than a full turn cannot be
       // anchored at all here: past one turn its angles alias, which silently
       // hands the counter-clockwise lap the tail colour instead of the head.
       final Shader? lap = _closedShaderFor(
         g,
-        snake.fill,
+        segment.fill,
         head - direction * g.capAngularExtent,
         opacity,
       );
       if (lap != null) {
         canvas.drawPath(
-          g.snakePath(
+          g.segmentPath(
             head,
             head + direction * g.jointLag,
             clockwise: style.clockwise,
@@ -656,9 +674,9 @@ class WovenRingPainter extends CustomPainter {
       ring,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = border.resolvedWidthFraction * g.band * 2
+        ..strokeWidth = border.resolvedWidthFraction * g.thickness * 2
         ..color = _withOpacity(
-          border.resolve(snake.fill, style.surface),
+          border.resolve(segment.fill, style.surfaceColor),
           opacity * border.resolvedOpacity,
         )
         ..isAntiAlias = true,
@@ -683,10 +701,10 @@ class WovenRingPainter extends CustomPainter {
     );
     // The joint runs cap tip to cap tip, so both its ends land exactly on the
     // silhouette. A stroke is centred on its path, which puts half its width
-    // past the edge of the band at each end: clip it, the same way a border is
+    // past the ring's edge at each end: clip it, the same way a border is
     // clipped, so the mark reads as an edge belonging to the ring instead of a
     // whisker laid over it. Butt ends for the same reason - a round cap would
-    // bulge along the band edge where the clip cannot reach it.
+    // bulge along the ring's edge where the clip cannot reach it.
     canvas.save();
     canvas.clipPath(g.annulus());
     canvas.drawArc(
@@ -696,38 +714,38 @@ class WovenRingPainter extends CustomPainter {
       false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(0.5, g.band * 0.012)
-        ..color = _withOpacity(style.surface, opacity * 0.85)
+        ..strokeWidth = math.max(0.5, g.thickness * 0.012)
+        ..color = _withOpacity(style.surfaceColor, opacity * 0.85)
         ..isAntiAlias = true,
     );
     canvas.restore();
   }
 
-  void _paintSnake(
+  void _paintSegment(
     Canvas canvas,
     WovenRingGeometry g,
     int i,
     double a,
     double b, {
     required double shaderEnd,
-    bool paintLift = true,
+    bool paintShadow = true,
     bool paintFill = true,
     bool paintBorder = true,
     bool composeSurface = false,
   }) {
-    final WovenSnake snake = snakes[i];
-    final double opacity = snake.opacity.isFinite
-        ? snake.opacity.clamp(0.0, 1.0)
+    final WovenSegment segment = segments[i];
+    final double opacity = segment.opacity.isFinite
+        ? segment.opacity.clamp(0.0, 1.0)
         : 1.0;
     if (opacity <= 0.0) return;
-    final Path path = g.snakePath(a, b, clockwise: style.clockwise);
+    final Path path = g.segmentPath(a, b, clockwise: style.clockwise);
 
-    if (paintLift && style.lift != null) {
-      _paintLift(canvas, g, a, opacity);
+    if (paintShadow && style.shadow != null) {
+      _paintShadow(canvas, g, a, opacity);
     }
 
     if (paintFill) {
-      if (composeSurface && _isTranslucent(snake)) {
+      if (composeSurface && _isTranslucent(segment)) {
         _paintSurface(canvas, path);
       }
       final Paint fill = Paint()..isAntiAlias = true;
@@ -735,7 +753,7 @@ class WovenRingPainter extends CustomPainter {
       final double direction = style.clockwise ? 1.0 : -1.0;
       final Shader? shader = _shaderFor(
         g,
-        snake.fill,
+        segment.fill,
         fullTurn ? style.resolvedStartAngle : a,
         fullTurn ? style.resolvedStartAngle + direction * _tau : shaderEnd,
         opacity,
@@ -743,7 +761,7 @@ class WovenRingPainter extends CustomPainter {
       if (shader != null) {
         fill.shader = shader;
       } else {
-        fill.color = _withOpacity(snake.fill.head, opacity);
+        fill.color = _withOpacity(segment.fill.head, opacity);
       }
       canvas.drawPath(path, fill);
     }
@@ -752,9 +770,9 @@ class WovenRingPainter extends CustomPainter {
     if (border == null) return;
 
     // Stroked at double width and clipped to the silhouette, so the line lands
-    // entirely inside the snake. A bordered snake is never fatter than its
+    // entirely inside the segment. A bordered segment is never fatter than its
     // neighbours, and the ring's outer edge stays a perfect circle.
-    final double width = border.resolvedWidthFraction * g.band;
+    final double width = border.resolvedWidthFraction * g.thickness;
     canvas.save();
     canvas.clipPath(path);
     canvas.drawPath(
@@ -763,7 +781,7 @@ class WovenRingPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = width * 2
         ..color = _withOpacity(
-          border.resolve(snake.fill, style.surface),
+          border.resolve(segment.fill, style.surfaceColor),
           opacity * border.resolvedOpacity,
         )
         ..isAntiAlias = true,
@@ -771,21 +789,21 @@ class WovenRingPainter extends CustomPainter {
     canvas.restore();
   }
 
-  /// A snake path with any self-intersection resolved into a plain boundary.
+  /// A segment path with any self-intersection resolved into a plain boundary.
   ///
-  /// A snake long enough to catch its own tail overlaps itself, and the path is
+  /// A segment long enough to catch its own tail overlaps itself, and the path is
   /// still *traced* through both caps even though only their outer halves are
   /// on the silhouette. That costs twice:
   ///
   ///   * stroking it as traced draws the two buried halves as a circle
-  ///     floating inside the band, which pops away the moment the ring closes;
+  ///     floating inside the ring, which pops away the moment the ring closes;
   ///   * the doubly wound lens has an even crossing count, so an even-odd
-  ///     complement reads it as *outside* the snake and punches a hole in the
-  ///     exclusion mask, letting a neighbour paint over this snake's head.
+  ///     complement reads it as *outside* the segment and punches a hole in the
+  ///     exclusion mask, letting a neighbour paint over this segment's head.
   ///     That second one is defensive: no case in the catalog can currently
-  ///     see it, because the lens sits inside the snake's own head lap and the
+  ///     see it, because the lens sits inside the segment's own head lap and the
   ///     lap pass repaints it either way. It is kept because relying on one
-  ///     pass to cover another pass's wrong mask is how the two-snake seam
+  ///     pass to cover another pass's wrong mask is how the two-segment seam
   ///     stayed broken for so long.
   ///
   /// Unioning with nothing collapses the winding, so what remains is the
@@ -793,7 +811,7 @@ class WovenRingPainter extends CustomPainter {
   ///
   /// The caps first touch when their centres are one cap diameter apart, and
   /// the centres are a chord `2 * track * sin(gap / 2)` apart, so contact
-  /// begins at a gap of exactly `2 * asin(cap / track)`. Short of that a snake
+  /// begins at a gap of exactly `2 * asin(cap / track)`. Short of that a segment
   /// cannot overlap itself and the path is returned untouched.
   Path _simplified(WovenRingGeometry g, Path path, double a, double b) {
     final double gap = _tau - (b - a).abs();
@@ -801,36 +819,36 @@ class WovenRingPainter extends CustomPainter {
     return Path.combine(PathOperation.union, path, Path());
   }
 
-  bool _isTranslucent(WovenSnake snake) {
-    final double opacity = snake.opacity.isFinite
-        ? snake.opacity.clamp(0.0, 1.0)
+  bool _isTranslucent(WovenSegment segment) {
+    final double opacity = segment.opacity.isFinite
+        ? segment.opacity.clamp(0.0, 1.0)
         : 1.0;
     return opacity < 0.999 ||
-        snake.fill.head.a < 0.999 ||
-        snake.fill.tail.a < 0.999;
+        segment.fill.head.a < 0.999 ||
+        segment.fill.tail.a < 0.999;
   }
 
   void _paintSurface(Canvas canvas, Path path) {
     canvas.drawPath(
       path,
       Paint()
-        ..color = style.surface
+        ..color = style.surfaceColor
         ..blendMode = BlendMode.src
         ..isAntiAlias = true,
     );
   }
 
-  void _paintLift(
+  void _paintShadow(
     Canvas canvas,
     WovenRingGeometry g,
     double headAngle,
     double opacity,
   ) {
-    final WovenLift lift = style.lift!;
-    final double blur = lift.resolvedBlurFraction * g.band;
-    final double offset = lift.resolvedOffsetFraction * g.band;
+    final WovenShadow shadow = style.shadow!;
+    final double blur = shadow.resolvedBlurFraction * g.thickness;
+    final double offset = shadow.resolvedOffsetFraction * g.thickness;
     // Backwards along the tangent at the head, so the shadow falls behind the
-    // cap and onto the snake underneath it.
+    // cap and onto the segment underneath it.
     final Offset back =
         Offset(math.sin(headAngle), -math.cos(headAngle)) *
         (style.clockwise ? 1.0 : -1.0) *
@@ -847,19 +865,19 @@ class WovenRingPainter extends CustomPainter {
     canvas.drawPath(
       head.shift(back),
       Paint()
-        ..color = _withOpacity(lift.color, opacity)
+        ..color = _withOpacity(shadow.color, opacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur),
     );
     canvas.restore();
   }
 
   WovenBorder? _borderFor(int i) {
-    if (i == highlighted) return highlightBorder;
-    return snakes[i].border;
+    if (i == highlightedIndex) return highlightBorder;
+    return segments[i].border;
   }
 
-  /// The along-length gradient for a snake that closes on itself, wrapping
-  /// exactly at [head] so the head's lap can hide the seam. Across-band
+  /// The along-segment gradient for a segment that closes on itself, wrapping
+  /// exactly at [head] so the head's lap can hide the seam. Across-thickness
   /// gradients are radial and have no seam, so they are returned unchanged.
   Shader? _closedShaderFor(
     WovenRingGeometry g,
@@ -868,7 +886,7 @@ class WovenRingPainter extends CustomPainter {
     double opacity,
   ) {
     if (fill.isSolid) return null;
-    if (style.gradientAxis == WovenGradientAxis.acrossBand) {
+    if (style.gradientAxis == WovenGradientAxis.acrossThickness) {
       final double direction = style.clockwise ? 1.0 : -1.0;
       return _shaderFor(g, fill, head, head + direction * _tau, opacity);
     }
@@ -910,9 +928,9 @@ class WovenRingPainter extends CustomPainter {
       for (final Color color in colors) _withOpacity(color, opacity),
     ];
 
-    if (style.gradientAxis == WovenGradientAxis.acrossBand) {
+    if (style.gradientAxis == WovenGradientAxis.acrossThickness) {
       // A tube: lighter on the outer edge. Ring-wide by nature, which is why
-      // the axis is a ring-level choice and never mixed between snakes.
+      // the axis is a ring-level choice and never mixed between segments.
       final List<Color> acrossColors = headFirst
           ? <Color>[fill.tail, fill.head]
           : <Color>[fill.head, fill.tail];
@@ -926,8 +944,8 @@ class WovenRingPainter extends CustomPainter {
       ).createShader(box);
     }
     // Along the length, cap tip to cap tip, so the rounded ends are shaded too
-    // because a flat cap on a gradient snake reads as a chip in the paint. The
-    // gradient belongs to the snake: it restarts at every one of them.
+    // because a flat cap on a gradient segment reads as a chip in the paint. The
+    // gradient belongs to the segment: it restarts at every one of them.
     final double direction = style.clockwise ? 1.0 : -1.0;
     final double head = a - direction * g.capAngularExtent;
     final double tail = b + direction * g.capAngularExtent;
@@ -953,16 +971,16 @@ class WovenRingPainter extends CustomPainter {
       color.withValues(alpha: color.a * opacity);
 
   @override
-  bool shouldRepaint(WovenRingPainter old) =>
+  bool shouldRepaint(WovenRingChartPainter old) =>
       old.mode != mode ||
-      old.intro != intro ||
-      old.introProgress != introProgress ||
+      old.animation != animation ||
+      old.animationProgress != animationProgress ||
       old.spin != spin ||
-      old.highlighted != highlighted ||
+      old.highlightedIndex != highlightedIndex ||
       old.highlightBorder != highlightBorder ||
       old.topologyMerge != topologyMerge ||
       old.topologyAnchor != topologyAnchor ||
       old.style != style ||
       !listEquals(old.fractions, fractions) ||
-      !listEquals(old.snakes, snakes);
+      !listEquals(old.segments, segments);
 }

@@ -1,16 +1,16 @@
-// Ten snakes, every one gradient-filled and bordered, animating continuously.
+// Ten segments, every one gradient-filled and bordered, animating continuously.
 //
-//   flutter run -d macos -t example/ten_snakes.dart
+//   cd example && flutter run -t lib/ten_segments.dart
 //
-// One screen, one ring. The intro replays on a timer and the data reshuffles
-// between it, so every animated path the component has - the relay reveal and
-// the data transition - is on screen without touching a control.
+// One screen, one chart. The entrance replays on a timer and the data reshuffles
+// between it, so every animated path the chart has - the sweep reveal and the
+// data transition - is on screen without touching a control.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
-void main() => runApp(const TenSnakesApp());
+void main() => runApp(const TenSegmentsApp());
 
 const Color _surface = Color(0xFFFBFAF7);
 const Color _ink = Color(0xFF202532);
@@ -24,13 +24,13 @@ const List<List<double>> _dataSets = <List<double>>[
   <double>[12, 9, 11, 8, 13, 10, 7, 12, 9, 9],
 ];
 
-class TenSnakesApp extends StatelessWidget {
-  const TenSnakesApp({super.key});
+class TenSegmentsApp extends StatelessWidget {
+  const TenSegmentsApp({super.key});
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
-    title: 'Ten snakes',
+    title: 'Ten segments',
     theme: ThemeData(
       colorScheme: ColorScheme.fromSeed(
         seedColor: WovenPalette.blue,
@@ -39,19 +39,19 @@ class TenSnakesApp extends StatelessWidget {
       scaffoldBackgroundColor: _surface,
       useMaterial3: true,
     ),
-    home: const TenSnakesScreen(),
+    home: const TenSegmentsScreen(),
   );
 }
 
-class TenSnakesScreen extends StatefulWidget {
-  const TenSnakesScreen({super.key});
+class TenSegmentsScreen extends StatefulWidget {
+  const TenSegmentsScreen({super.key});
 
   @override
-  State<TenSnakesScreen> createState() => _TenSnakesScreenState();
+  State<TenSegmentsScreen> createState() => _TenSegmentsScreenState();
 }
 
-class _TenSnakesScreenState extends State<TenSnakesScreen> {
-  final WovenRingController _controller = WovenRingController();
+class _TenSegmentsScreenState extends State<TenSegmentsScreen> {
+  final WovenRingChartController _controller = WovenRingChartController();
   Timer? _shuffle;
   Timer? _replay;
   int _set = 0;
@@ -90,15 +90,15 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
     super.dispose();
   }
 
-  List<WovenSnake> get _snakes {
+  List<WovenSegment> get _segments {
     final List<double> values = _dataSets[_set];
-    return <WovenSnake>[
+    return <WovenSegment>[
       for (var i = 0; i < values.length; i++)
-        WovenSnake(
+        WovenSegment(
           value: values[i],
-          // Every snake gradient-filled...
+          // Every segment gradient-filled...
           fill: WovenFill.shaded(WovenPalette.extended[i], step: 0.04),
-          // ...and every snake bordered.
+          // ...and every segment bordered.
           border: const WovenBorder(),
           semanticLabel: 'Segment ${i + 1}',
         ),
@@ -107,7 +107,7 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final List<WovenSnake> snakes = _snakes;
+    final List<WovenSegment> segments = _segments;
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
@@ -116,7 +116,7 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               const Text(
-                'Ten snakes, all gradient, all bordered, animating',
+                'Ten segments, all gradient, all bordered, animating',
                 key: ValueKey<String>('headline'),
                 style: TextStyle(
                   fontSize: 20,
@@ -126,7 +126,7 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'relay intro every 11s, data transition every 2.2s',
+                'sweep animation every 11s, data transition every 2.2s',
                 style: TextStyle(
                   fontSize: 13,
                   color: _ink.withValues(alpha: 0.6),
@@ -135,17 +135,17 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
               const SizedBox(height: 28),
               SizedBox.square(
                 dimension: 460,
-                child: WovenRing(
-                  key: const ValueKey<String>('ten-snake-ring'),
-                  snakes: snakes,
-                  style: const WovenRingStyle(surface: _surface),
-                  intro: WovenRingIntro.relay,
+                child: WovenRingChart(
+                  key: const ValueKey<String>('ten-segment-ring'),
+                  segments: segments,
+                  style: const WovenRingStyle(surfaceColor: _surface),
+                  animation: WovenRingAnimation.sweep,
                   controller: _controller,
                   semanticLabel: 'Ten segment woven ring',
-                  semanticValue: '${snakes.length} segments',
+                  semanticValue: '${segments.length} segments',
                   center: _Centre(
-                    value: '${snakes.length}',
-                    label: 'snakes',
+                    value: '${segments.length}',
+                    label: 'segments',
                     note: 'set ${_set + 1} of ${_dataSets.length}',
                   ),
                 ),
@@ -158,7 +158,7 @@ class _TenSnakesScreenState extends State<TenSnakesScreen> {
                     key: const ValueKey<String>('replay'),
                     onPressed: _controller.replay,
                     icon: const Icon(Icons.play_arrow_rounded),
-                    label: const Text('Replay intro'),
+                    label: const Text('Replay animation'),
                   ),
                   OutlinedButton.icon(
                     key: const ValueKey<String>('shuffle'),
