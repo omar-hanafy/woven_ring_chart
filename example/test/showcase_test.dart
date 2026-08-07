@@ -8,7 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
-import 'package:woven_ring_chart_example/main.dart';
+import 'package:woven_ring_chart_example/showcase.dart';
 import 'package:woven_ring_chart_example/src/package_info.dart';
 import 'package:woven_ring_chart_example/src/ui/code_block.dart';
 

@@ -70,9 +70,13 @@ jobs:
             exit 1
           fi
 
+          # -t lib/showcase.dart, not the default lib/main.dart: main.dart is
+          # the short getting-started example that pub.dev renders under its
+          # Example tab, and the showcase is the separate entrypoint.
           echo "Building for $base_href at version $version."
           flutter build web \
             --release \
+            --target lib/showcase.dart \
             --base-href "$base_href" \
             --dart-define=wovenVersion="$version"
 
