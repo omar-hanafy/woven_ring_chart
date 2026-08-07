@@ -1,14 +1,13 @@
 name: CI
 
 # The lane rules are: main carries stable versions, dev carries prereleases.
-# Nothing stable has been released yet, so main still carries 1.0.0-dev.1 and a
-# push-triggered lane check there would fail on a state that is simply the
-# bootstrap. Push events are scoped to dev until the first stable release; add
-# main back to this list in the promotion PR. Pull requests are unscoped, so the
-# promotion PR into main is still held to the stable rule.
+# Both lanes are checked on push, and a pull request is checked against the lane
+# it targets, so a promotion into main is held to the stable rule before it
+# lands rather than after.
 on:
   push:
     branches:
+      - main
       - dev
   pull_request:
 

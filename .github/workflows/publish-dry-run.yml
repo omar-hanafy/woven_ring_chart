@@ -1,15 +1,13 @@
 name: pub-dry-run
 
-# The lane rules are: main carries stable versions, dev carries prereleases.
-# Nothing stable has been released yet, so main still carries 1.0.0-dev.1 and a
-# push-triggered lane check there would fail on a state that is simply the
-# bootstrap. Push events are scoped to dev until the first stable release; add
-# main back to this list in the promotion PR. Pull requests are unscoped, so the
-# promotion PR into main is still held to the stable rule.
+# main carries stable versions and dev carries prereleases. The archive is
+# validated on both lanes and on every pull request that targets them, so a
+# version is never tagged before its archive is known to be publishable.
 on:
   pull_request:
   push:
     branches:
+      - main
       - dev
 
 permissions:
