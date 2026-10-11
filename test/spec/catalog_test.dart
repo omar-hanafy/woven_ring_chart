@@ -1716,6 +1716,595 @@ void main() {
   ];
 
   group('B. static raster catalog', () {
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final Color surface in <Color>[
+        WovenPalette.surface,
+        const Color(0x00000000),
+        const Color(0x800000FF),
+      ]) {
+        testWidgets('B60 identical translucent owners are uniform '
+            'clockwise=$clockwise surface=$surface', (
+          WidgetTester tester,
+        ) async {
+          const Color ink = Color(0x80FF0000);
+          final Raster reference = await render(
+            tester,
+            CustomPaint(
+              painter: _BorderCompositionReference(
+                fill: ink,
+                border: const Color(0x00000000),
+                surface: surface,
+                segmentOpacity: 1,
+                lineOpacity: 1,
+              ),
+            ),
+          );
+          final Rgba expected = reference.at(240, 240);
+          for (final (double, double) proportions in <(double, double)>[
+            (0.20, 0.50),
+            (0.30, 1),
+          ]) {
+            for (final double startAngle in <double>[-math.pi / 2, 0.37]) {
+              final Ring geometry = Ring(
+                side: side,
+                thicknessFraction: proportions.$1,
+                overlapFraction: proportions.$2,
+                startAngle: startAngle,
+                clockwise: clockwise,
+              );
+              Raster? single;
+              for (final int count in <int>[1, 2, 4, 8]) {
+                final Raster actual = await render(
+                  tester,
+                  WovenRingChart(
+                    animation: WovenRingAnimation.none,
+                    style: WovenRingStyle(
+                      surfaceColor: surface,
+                      thicknessFraction: proportions.$1,
+                      overlapFraction: proportions.$2,
+                      startAngle: startAngle,
+                      clockwise: clockwise,
+                    ),
+                    segments: <WovenSegment>[
+                      for (var i = 0; i < count; i++)
+                        const WovenSegment(
+                          value: 1,
+                          fill: WovenFill.solid(ink),
+                        ),
+                    ],
+                  ),
+                );
+                if (count == 1) single = actual;
+                var samples = 0;
+                final List<String> violations = <String>[];
+                for (var y = 0; y < actual.height; y++) {
+                  for (var x = 0; x < actual.width; x++) {
+                    final double radius =
+                        (Offset(x + 0.5, y + 0.5) - geometry.center).distance;
+                    // Only the actual hole and outer silhouette have AA.
+                    // Every internal ownership boundary remains in the scan.
+                    if (radius < geometry.inner + 5 ||
+                        radius > geometry.outer - 5) {
+                      continue;
+                    }
+                    samples++;
+                    final Rgba pixel = actual.at(x, y);
+                    final Rgba control = single!.at(x, y);
+                    if (channelDistance(pixel, expected) > 1 ||
+                        (pixel.a - expected.a).abs() > 1 ||
+                        channelDistance(pixel, control) > 1 ||
+                        (pixel.a - control.a).abs() > 1) {
+                      if (violations.length < 6) {
+                        violations.add(
+                          '($x,$y)=$pixel reference=$expected single=$control',
+                        );
+                      }
+                    }
+                  }
+                }
+                expect(samples, greaterThan(100000));
+                expect(
+                  violations,
+                  isEmpty,
+                  reason:
+                      'count=$count thickness=${proportions.$1} '
+                      'overlap=${proportions.$2} start=$startAngle: '
+                      '${violations.join('; ')}',
+                );
+              }
+            }
+          }
+        });
+      }
+    }
+    for (final bool clockwise in <bool>[true, false]) {
+      testWidgets(
+        'B59 mixed color-space owners preserve final laps clockwise=$clockwise',
+        (WidgetTester tester) async {
+          const Color white = Color(0xFFFFFFFF);
+          const Color black = Color(0xFF000000);
+          const Color p3Black = Color.from(
+            alpha: 1,
+            red: 0,
+            green: 0,
+            blue: 0,
+            colorSpace: ui.ColorSpace.displayP3,
+          );
+          const List<Color> fills = <Color>[
+            Color(0xFFFF0000),
+            Color(0xFF00FF00),
+            Color(0xFF0000FF),
+            Color(0xFFFFFF00),
+          ];
+          for (final int count in <int>[4, 8, 30]) {
+            for (final (double thickness, double overlap) proportions
+                in <(double, double)>[(0.20, 0.50), (0.30, 1)]) {
+              for (final double startAngle in <double>[0, 0.37]) {
+                final Ring geometry = Ring(
+                  side: side,
+                  thicknessFraction: proportions.$1,
+                  overlapFraction: proportions.$2,
+                  startAngle: startAngle,
+                  clockwise: clockwise,
+                );
+                // Equal values share the ring equally, including the documented
+                // no-room-for-minima case. No production fraction helper is used.
+                final List<Extent> extents = extentsFor(
+                  geometry,
+                  List<double>.filled(count, 1 / count),
+                );
+                final List<int> active = List<int>.generate(
+                  count,
+                  (int i) => i,
+                );
+                final double borderWidth = geometry.thickness * 0.05;
+                for (final double opacity in <double>[0.25, 0.5]) {
+                  Future<Raster> image(int p3Owner) async {
+                    await tester.pumpWidget(const SizedBox.shrink());
+                    return render(
+                      tester,
+                      WovenRingChart(
+                        animation: WovenRingAnimation.none,
+                        style: WovenRingStyle(
+                          thicknessFraction: proportions.$1,
+                          overlapFraction: proportions.$2,
+                          startAngle: startAngle,
+                          clockwise: clockwise,
+                          surfaceColor: white,
+                        ),
+                        segments: <WovenSegment>[
+                          for (var i = 0; i < count; i++)
+                            WovenSegment.solid(
+                              1,
+                              fills[i % fills.length],
+                              opacity: opacity,
+                              border: WovenBorder(
+                                color: i == p3Owner ? p3Black : black,
+                                widthFraction: 0.05,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  final Raster srgb = await image(-1);
+                  for (final int groupedOwner in <int>[0, count - 1]) {
+                    final Raster mixed = await image(groupedOwner);
+                    var fillSamples = 0;
+                    var borderSamples = 0;
+                    var groupedSamples = 0;
+                    var nongroupedSamples = 0;
+                    var firstOwnerSamples = 0;
+                    var lastOwnerSamples = 0;
+                    for (var radial = 0; radial < 13; radial++) {
+                      final double radius =
+                          geometry.inner +
+                          3 +
+                          (geometry.thickness - 6) * radial / 12;
+                      for (var angular = 0; angular < 1440; angular++) {
+                        final Offset requested = geometry.at(
+                          radius,
+                          angular * 2 * math.pi / 1440,
+                        );
+                        final Offset point = Offset(
+                          (requested.dx - 0.5).round() + 0.5,
+                          (requested.dy - 0.5).round() + 0.5,
+                        );
+                        final int owner = ownerAt(
+                          geometry,
+                          extents,
+                          active,
+                          point,
+                        );
+                        if (owner < 0) continue;
+                        // Stay clear of every silhouette and cap boundary that
+                        // could make a geometric owner or stroke ambiguous.
+                        if (extents.any(
+                          (Extent extent) =>
+                              signedDistance(geometry, extent, point).abs() <
+                                  1.5 ||
+                              ((point -
+                                                  geometry.at(
+                                                    geometry.track,
+                                                    extent.start,
+                                                  ))
+                                              .distance -
+                                          geometry.cap)
+                                      .abs() <
+                                  1.5 ||
+                              ((point - geometry.at(geometry.track, extent.end))
+                                              .distance -
+                                          geometry.cap)
+                                      .abs() <
+                                  1.5,
+                        )) {
+                          continue;
+                        }
+                        final double inset = -signedDistance(
+                          geometry,
+                          extents[owner],
+                          point,
+                        );
+                        final bool fill = inset > borderWidth + 1.5;
+                        final bool border =
+                            inset > 1.5 && inset < borderWidth - 1.5;
+                        if (!fill && !border) continue;
+                        final Color source = fill
+                            ? fills[owner % fills.length]
+                            : black;
+                        final double alpha = (opacity * 255).round() / 255;
+                        final List<double> expected = <double>[
+                          (source.r * alpha + 1 - alpha) * 255,
+                          (source.g * alpha + 1 - alpha) * 255,
+                          (source.b * alpha + 1 - alpha) * 255,
+                          255,
+                        ];
+                        final Rgba baseline = srgb.atPoint(point);
+                        final Rgba actual = mixed.atPoint(point);
+                        final String reason =
+                            'mixed final owner count=$count '
+                            'clockwise=$clockwise proportions=$proportions '
+                            'startAngle=$startAngle opacity=$opacity '
+                            'grouped=$groupedOwner owner=$owner point=$point '
+                            'fill=$fill inset=$inset baseline=$baseline actual=$actual';
+                        final List<int> before = <int>[
+                          baseline.r,
+                          baseline.g,
+                          baseline.b,
+                          baseline.a,
+                        ];
+                        final List<int> after = <int>[
+                          actual.r,
+                          actual.g,
+                          actual.b,
+                          actual.a,
+                        ];
+                        for (var channel = 0; channel < 4; channel++) {
+                          expect(
+                            before[channel],
+                            closeTo(expected[channel], 1),
+                            reason: '$reason sRGB oracle',
+                          );
+                          expect(
+                            after[channel],
+                            closeTo(expected[channel], 1),
+                            reason: '$reason mixed oracle',
+                          );
+                          expect(
+                            after[channel],
+                            closeTo(before[channel], 1),
+                            reason: '$reason equivalent ink',
+                          );
+                        }
+                        if (fill) fillSamples++;
+                        if (border) borderSamples++;
+                        if (owner == groupedOwner) groupedSamples++;
+                        if (owner != groupedOwner) nongroupedSamples++;
+                        if (owner == 0) firstOwnerSamples++;
+                        if (owner == count - 1) lastOwnerSamples++;
+                      }
+                    }
+                    expect(fillSamples, greaterThan(200));
+                    expect(borderSamples, greaterThan(100));
+                    expect(groupedSamples, greaterThan(10));
+                    expect(nongroupedSamples, greaterThan(200));
+                    expect(firstOwnerSamples, greaterThan(10));
+                    expect(lastOwnerSamples, greaterThan(10));
+                  }
+                }
+              }
+            }
+          }
+        },
+      );
+    }
+
+    testWidgets('B58 border groups preserve their renderer color spaces', (
+      WidgetTester tester,
+    ) async {
+      // Paint an independent flat control using the renderer's group
+      // compositing. Each source keeps its own color space until drawing;
+      // no encoded-channel CPU blend can serve as a wide-gamut oracle.
+      const Color p3Green = Color.from(
+        alpha: 1,
+        red: 0,
+        green: 1,
+        blue: 0,
+        colorSpace: ui.ColorSpace.displayP3,
+      );
+      const Color p3Blue = Color.from(
+        alpha: 0.5,
+        red: 0.1,
+        green: 0.2,
+        blue: 1,
+        colorSpace: ui.ColorSpace.displayP3,
+      );
+      const Color p3Red = Color.from(
+        alpha: 1,
+        red: 1,
+        green: 0,
+        blue: 0,
+        colorSpace: ui.ColorSpace.displayP3,
+      );
+      const Color blue = Color(0xFF0000FF);
+      const List<(Color, Color, double)> sources = <(Color, Color, double)>[
+        (p3Green, Color(0xFFFF0000), 1),
+        (p3Green, Color(0x80FF0000), 1),
+        (p3Green, Color(0x00000000), 1),
+        (p3Blue, Color(0xFFFF0000), 0.5),
+        (Color(0x800000FF), p3Red, 0.5),
+        (p3Green, p3Red, 1),
+      ];
+      for (final bool clockwise in <bool>[true, false]) {
+        for (final (Color ink, Color surface, double lineOpacity) in sources) {
+          for (final double opacity in <double>[0.25, 0.5]) {
+            await tester.pumpWidget(const SizedBox.shrink());
+            final Raster reference = await render(
+              tester,
+              CustomPaint(
+                painter: _BorderCompositionReference(
+                  fill: blue,
+                  border: ink,
+                  surface: surface,
+                  segmentOpacity: opacity,
+                  lineOpacity: lineOpacity,
+                ),
+              ),
+            );
+            Rgba? singlePixel;
+            for (final int count in <int>[1, 4]) {
+              await tester.pumpWidget(const SizedBox.shrink());
+              final Raster actual = await render(
+                tester,
+                WovenRingChart(
+                  animation: WovenRingAnimation.none,
+                  style: WovenRingStyle(
+                    clockwise: clockwise,
+                    surfaceColor: surface,
+                  ),
+                  segments: <WovenSegment>[
+                    for (var i = 0; i < count; i++)
+                      WovenSegment(
+                        value: 1,
+                        opacity: opacity,
+                        fill: const WovenFill.solid(blue),
+                        border: WovenBorder(
+                          color: ink,
+                          opacity: lineOpacity,
+                          widthFraction: 0.05,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+              // This pixel is 3.5px inside the circular outer edge and fully
+              // inside its 4.8px border. Geometry and antialiasing cannot
+              // justify a color change when identical owners are added.
+              final Rgba pixel = actual.at(476, 240);
+              final Rgba expected = reference.at(476, 240);
+              final String reason =
+                  'renderer group count=$count '
+                  'clockwise=$clockwise opacity=$opacity border=$ink '
+                  'lineOpacity=$lineOpacity surface=$surface pixel=$pixel '
+                  'reference=$expected';
+              for (final (int actual, int expected) channel in <(int, int)>[
+                (pixel.r, expected.r),
+                (pixel.g, expected.g),
+                (pixel.b, expected.b),
+                (pixel.a, expected.a),
+              ]) {
+                expect(channel.$1, closeTo(channel.$2, 1), reason: reason);
+              }
+              if (singlePixel != null) {
+                expect(
+                  channelDistance(pixel, singlePixel),
+                  lessThanOrEqualTo(1),
+                  reason: reason,
+                );
+                expect(pixel.a, closeTo(singlePixel.a, 1), reason: reason);
+              }
+              singlePixel = pixel;
+            }
+          }
+        }
+      }
+    });
+
+    testWidgets('B57 whole segment opacity combines fill and border once', (
+      WidgetTester tester,
+    ) async {
+      // These are premultiplied source-over equations, independently derived
+      // from the public whole-segment opacity contract. The raster reference
+      // verifies the unattenuated fill/border first; it cannot silently bless
+      // a border with the wrong alpha or an incorrect highlight override.
+      List<double> premultiplied(Color color, {double opacity = 1}) {
+        final double alpha = (color.a * opacity * 255).round() / 255;
+        return <double>[
+          color.r * alpha,
+          color.g * alpha,
+          color.b * alpha,
+          alpha,
+        ];
+      }
+
+      List<double> over(List<double> foreground, List<double> background) =>
+          <double>[
+            for (var c = 0; c < 4; c++)
+              foreground[c] + background[c] * (1 - foreground[3]),
+          ];
+
+      void expectPremultiplied(
+        Rgba pixel,
+        List<double> expected,
+        String reason,
+      ) {
+        final List<int> channels = <int>[pixel.r, pixel.g, pixel.b, pixel.a];
+        for (var c = 0; c < 4; c++) {
+          expect(channels[c], closeTo(expected[c] * 255, 1), reason: reason);
+        }
+      }
+
+      const Color transparent = Color(0x00000000);
+      const Color red = Color(0xFFFF0000);
+      const Color black = Color(0xFF000000);
+      const List<(Color, Color, Color, double, Color)> combinations =
+          <(Color, Color, Color, double, Color)>[
+            (red, black, transparent, 1, transparent),
+            (red, black, Color(0xFFFFFFFF), 1, transparent),
+            (red, black, Color(0x800000FF), 1, transparent),
+            (
+              Color(0x80FF0000),
+              Color(0x80000000),
+              Color(0x800000FF),
+              0.5,
+              transparent,
+            ),
+            (
+              Color(0x80FF0000),
+              Color(0x80000000),
+              transparent,
+              0.5,
+              Color(0xFF00FF00),
+            ),
+          ];
+      for (final int count in <int>[1, 4]) {
+        for (final bool clockwise in <bool>[true, false]) {
+          for (final bool highlighted in <bool>[false, true]) {
+            for (final (
+                  Color fill,
+                  Color ink,
+                  Color surface,
+                  double lineOpacity,
+                  Color ancestor,
+                )
+                in combinations) {
+              final WovenBorder border = WovenBorder(
+                color: ink,
+                widthFraction: 0.05,
+                opacity: lineOpacity,
+              );
+              final Ring geometry = Ring(
+                side: side,
+                thicknessFraction: 0.20,
+                overlapFraction: 0.50,
+                startAngle: 0,
+                clockwise: clockwise,
+              );
+              final List<Offset> points = <Offset>[
+                // Radial edge, well inside the 4.8px inside-only border.
+                const Offset(476.5, 240.5),
+                if (count > 1)
+                  for (final Extent extent in extentsFor(
+                    geometry,
+                    List<double>.filled(count, 1 / count),
+                  ).take(highlighted ? 1 : count))
+                    geometry.at(geometry.track, extent.start) +
+                        Offset(
+                              math.sin(extent.start),
+                              -math.cos(extent.start),
+                            ) *
+                            geometry.dir *
+                            (geometry.cap - 2.4),
+              ];
+              Future<Raster> image(
+                double opacity,
+                Color chartSurface,
+                Color backdrop,
+              ) async {
+                await tester.pumpWidget(const SizedBox.shrink());
+                return render(
+                  tester,
+                  ColoredBox(
+                    color: backdrop,
+                    child: WovenRingChart(
+                      style: WovenRingStyle(
+                        startAngle: 0,
+                        clockwise: clockwise,
+                        surfaceColor: chartSurface,
+                      ),
+                      animation: WovenRingAnimation.none,
+                      highlightedIndex: highlighted ? 0 : null,
+                      highlightBorder: border,
+                      segments: <WovenSegment>[
+                        for (var i = 0; i < count; i++)
+                          WovenSegment(
+                            value: 1,
+                            fill: WovenFill.solid(fill),
+                            opacity: opacity,
+                            border: highlighted
+                                ? const WovenBorder(
+                                    color: Color(0xFFFFFFFF),
+                                    widthFraction: 0.05,
+                                  )
+                                : border,
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+
+              final Raster full = await image(1, transparent, transparent);
+              final List<double> combined = over(
+                premultiplied(ink, opacity: lineOpacity),
+                premultiplied(fill),
+              );
+              for (final double opacity in <double>[0.25, 0.5]) {
+                final Raster actual = await image(opacity, surface, ancestor);
+                final double groupAlpha = (opacity * 255).round() / 255;
+                for (final Offset point in points) {
+                  final String reason =
+                      'whole-segment composition count=$count '
+                      'clockwise=$clockwise highlighted=$highlighted fill=$fill '
+                      'border=$ink lineOpacity=$lineOpacity surface=$surface '
+                      'ancestor=$ancestor opacity=$opacity point=$point';
+                  final Rgba reference = full.atPoint(point);
+                  expectPremultiplied(reference, combined, '$reason reference');
+                  // Scale the complete independently verified raster exactly
+                  // once, then place it over the configured surface/backdrop.
+                  final List<double> attenuated = <double>[
+                    reference.r / 255 * groupAlpha,
+                    reference.g / 255 * groupAlpha,
+                    reference.b / 255 * groupAlpha,
+                    reference.a / 255 * groupAlpha,
+                  ];
+                  expectPremultiplied(
+                    actual.atPoint(point),
+                    over(
+                      over(attenuated, premultiplied(surface)),
+                      premultiplied(ancestor),
+                    ),
+                    reason,
+                  );
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
     testWidgets('B55 zero opacity keeps its surface and woven ownership', (
       WidgetTester tester,
     ) async {
@@ -2471,6 +3060,127 @@ void main() {
   // =========================================================================
 
   group('E. animation', () {
+    for (final WovenRingAnimation animation in <WovenRingAnimation>[
+      WovenRingAnimation.none,
+      WovenRingAnimation.sweep,
+      WovenRingAnimation.grow,
+    ]) {
+      for (final (String label, List<double> dropped)
+          in <(String, List<double>)>[
+            ('zero', <double>[0]),
+            ('negative', <double>[-3]),
+            ('NaN', <double>[double.nan]),
+            ('infinity', <double>[double.infinity]),
+            ('negative infinity', <double>[double.negativeInfinity]),
+            (
+              'mixed',
+              <double>[
+                0,
+                -3,
+                double.nan,
+                double.infinity,
+                double.negativeInfinity,
+              ],
+            ),
+          ]) {
+        testWidgets(
+          'E8 dropped $label values preserve ${animation.name} frames',
+          (WidgetTester tester) async {
+            for (final int count in <int>[1, 4]) {
+              for (final bool clockwise in <bool>[true, false]) {
+                for (final Color surface in <Color>[
+                  const Color(0x00000000),
+                  const Color(0x800000FF),
+                  const Color(0xFFFFFFFF),
+                ]) {
+                  final List<WovenSegment> valid = <WovenSegment>[
+                    for (var i = 0; i < count; i++)
+                      WovenSegment(
+                        value: 1,
+                        fill: WovenFill.shaded(tenColors[i]),
+                        border: const WovenBorder(
+                          color: Color(0x80000000),
+                          widthFraction: 0.05,
+                          opacity: 0.5,
+                        ),
+                      ),
+                  ];
+                  final List<WovenSegment> ignored = <WovenSegment>[
+                    for (final double value in dropped)
+                      WovenSegment(
+                        value: value,
+                        fill: const WovenFill.solid(Color(0xFFFF00FF)),
+                        border: const WovenBorder(color: Color(0xFF00FFFF)),
+                      ),
+                  ];
+                  // Leading, interior and trailing invalid slots must all be
+                  // absent from the visible frame. Keep the highlighted owner
+                  // identical after its caller-visible index shifts.
+                  final List<WovenSegment> withIgnored = <WovenSegment>[
+                    ...ignored,
+                    valid.first,
+                    ...ignored,
+                    ...valid.skip(1),
+                    ...ignored,
+                  ];
+                  Future<List<Raster>> frames(
+                    List<WovenSegment> segments,
+                    int highlight,
+                  ) async {
+                    await tester.pumpWidget(const SizedBox.shrink());
+                    final GlobalKey key = GlobalKey();
+                    await pump(
+                      tester,
+                      key,
+                      WovenRingChart(
+                        segments: segments,
+                        highlightedIndex: highlight,
+                        highlightBorder: const WovenBorder(
+                          color: Color(0xFF000000),
+                          widthFraction: 0.05,
+                        ),
+                        style: WovenRingStyle(
+                          clockwise: clockwise,
+                          surfaceColor: surface,
+                        ),
+                        animation: animation,
+                        animationDuration: const Duration(seconds: 1),
+                      ),
+                    );
+                    if (animation == WovenRingAnimation.none) {
+                      return <Raster>[await capture(tester, key)];
+                    }
+                    await tester.pump(const Duration(milliseconds: 250));
+                    final Raster entrance = await capture(tester, key);
+                    await tester.pump(const Duration(milliseconds: 750));
+                    return <Raster>[entrance, await capture(tester, key)];
+                  }
+
+                  final List<Raster> expected = await frames(valid, 0);
+                  final List<Raster> actual = await frames(
+                    withIgnored,
+                    ignored.length,
+                  );
+                  expect(actual.length, expected.length);
+                  for (var frame = 0; frame < expected.length; frame++) {
+                    // Exact bytes, including antialiasing and transparent pixels.
+                    // A dropped category has no permission to alter any pixel.
+                    expect(
+                      actual[frame].bytes,
+                      orderedEquals(expected[frame].bytes),
+                      reason:
+                          '$label changed ${animation.name} count=$count '
+                          'clockwise=$clockwise surface=$surface frame=$frame',
+                    );
+                  }
+                }
+              }
+            }
+          },
+        );
+      }
+    }
+
     testWidgets(
       'E7 single reveals keep round bordered ends and close shadows',
       (WidgetTester tester) async {
@@ -2891,6 +3601,205 @@ void main() {
   // =========================================================================
 
   group('F. data transitions', () {
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final int? selected in <int?>[null, 0, 1, 2]) {
+        testWidgets('F23 highlight replaces its logical border contribution '
+            'clockwise=$clockwise selected=$selected', (
+          WidgetTester tester,
+        ) async {
+          const List<Color> normal = <Color>[
+            Color(0xFFFF0000),
+            Color(0xFF0000FF),
+            Color(0xFFFFFF00),
+          ];
+          for (final int? previous in <int?>[null, 0]) {
+            for (final Color highlight in <Color>[
+              const Color(0xFF00FF00),
+              const Color(0xFFFF00FF),
+            ]) {
+              Future<Raster> run({required bool selectionFirst}) async {
+                await tester.pumpWidget(const SizedBox.shrink());
+                final GlobalKey boundary = GlobalKey();
+                WovenRingChart chart(int active, int? selection, Color line) =>
+                    WovenRingChart(
+                      animation: WovenRingAnimation.none,
+                      transitionDuration: const Duration(seconds: 1),
+                      highlightedIndex: selection,
+                      highlightBorder: WovenBorder(
+                        color: line,
+                        widthFraction: 0.05,
+                      ),
+                      style: WovenRingStyle(clockwise: clockwise),
+                      segments: <WovenSegment>[
+                        for (var i = 0; i < normal.length; i++)
+                          WovenSegment(
+                            value: i == active ? 1 : 0,
+                            fill: const WovenFill.solid(Color(0xFFFFFFFF)),
+                            border: WovenBorder(
+                              color: normal[i],
+                              widthFraction: 0.05,
+                            ),
+                          ),
+                      ],
+                    );
+                const Color oldHighlight = Color(0xFF00FF00);
+                await pump(tester, boundary, chart(0, previous, oldHighlight));
+                await pump(tester, boundary, chart(1, previous, oldHighlight));
+                await tester.pump(const Duration(milliseconds: 500));
+                if (selectionFirst) {
+                  await pump(tester, boundary, chart(1, selected, highlight));
+                  await pump(tester, boundary, chart(2, selected, highlight));
+                } else {
+                  await pump(
+                    tester,
+                    boundary,
+                    chart(2, previous, oldHighlight),
+                  );
+                  await pump(tester, boundary, chart(2, selected, highlight));
+                }
+                return capture(tester, boundary);
+              }
+
+              final Raster beforeRetarget = await run(selectionFirst: true);
+              final Raster afterRetarget = await run(selectionFirst: false);
+              // At the halfway frame, the old red and blue logical sources
+              // contribute equally. Highlight replaces only its own source;
+              // the new yellow target contributes nothing until time advances.
+              final Color first = selected == 0 ? highlight : normal[0];
+              final Color second = selected == 1 ? highlight : normal[1];
+              final Rgba expected = Rgba(
+                ((first.r + second.r) * 255 / 2).round(),
+                ((first.g + second.g) * 255 / 2).round(),
+                ((first.b + second.b) * 255 / 2).round(),
+                255,
+              );
+              for (final Raster raster in <Raster>[
+                beforeRetarget,
+                afterRetarget,
+              ]) {
+                for (final (int, int) point in <(int, int)>[
+                  (240, 3),
+                  (476, 240),
+                  (240, 476),
+                  (3, 240),
+                ]) {
+                  final Rgba pixel = raster.at(point.$1, point.$2);
+                  expect(
+                    channelDistance(pixel, expected),
+                    lessThanOrEqualTo(1),
+                    reason:
+                        'previous=$previous highlight=$highlight '
+                        'point=$point pixel=$pixel expected=$expected',
+                  );
+                  expect(pixel.a, 255);
+                }
+              }
+              expect(
+                afterRetarget.bytes,
+                orderedEquals(beforeRetarget.bytes),
+                reason:
+                    'no time elapsed: selection and retarget order must '
+                    'preserve the same frame; previous=$previous '
+                    'highlight=$highlight',
+              );
+            }
+          }
+        });
+      }
+    }
+    for (final int destinationCount in <int>[2, 1, 0]) {
+      for (final bool retarget in <bool>[false, true]) {
+        testWidgets('F22 invalid current-list highlight is absent during '
+            'shrink to $destinationCount retarget=$retarget', (
+          WidgetTester tester,
+        ) async {
+          for (final bool clockwise in <bool>[true, false]) {
+            for (final bool oldSelection in <bool>[false, true]) {
+              for (final int requested in <int>{-1, destinationCount, 3, 8}) {
+                Future<List<Raster>> run(int? index) async {
+                  await tester.pumpWidget(const SizedBox.shrink());
+                  final GlobalKey boundary = GlobalKey();
+                  WovenRingChart chart(int count, int? selection) =>
+                      WovenRingChart(
+                        animation: WovenRingAnimation.none,
+                        transitionDuration: const Duration(seconds: 1),
+                        style: WovenRingStyle(clockwise: clockwise),
+                        highlightedIndex: selection,
+                        highlightBorder: const WovenBorder(
+                          color: Color(0xFF000000),
+                          widthFraction: 0.05,
+                        ),
+                        segments: <WovenSegment>[
+                          for (var i = 0; i < count; i++)
+                            WovenSegment(
+                              value: 1,
+                              fill: WovenFill.solid(tenColors[i]),
+                            ),
+                        ],
+                      );
+                  await pump(
+                    tester,
+                    boundary,
+                    chart(4, oldSelection ? 3 : null),
+                  );
+                  if (retarget) {
+                    // Start a many-to-sole topology handoff, then retarget
+                    // its retained styles before the first motion settles.
+                    await pump(tester, boundary, chart(1, index));
+                    await tester.pump(const Duration(milliseconds: 300));
+                  }
+                  await pump(tester, boundary, chart(destinationCount, index));
+                  await tester.pump(const Duration(milliseconds: 100));
+                  final Raster early = await capture(tester, boundary);
+                  await tester.pump(const Duration(milliseconds: 200));
+                  final Raster middle = await capture(tester, boundary);
+                  await tester.pump(const Duration(milliseconds: 700));
+                  return <Raster>[
+                    early,
+                    middle,
+                    await capture(tester, boundary),
+                  ];
+                }
+
+                final List<Raster> unselected = await run(null);
+                final List<Raster> invalid = await run(requested);
+                for (var frame = 0; frame < unselected.length; frame++) {
+                  expect(
+                    invalid[frame].bytes,
+                    orderedEquals(unselected[frame].bytes),
+                    reason:
+                        'current list length=$destinationCount '
+                        'invalid index=$requested clockwise=$clockwise '
+                        'oldSelection=$oldSelection retarget=$retarget frame=$frame',
+                  );
+                }
+                if (destinationCount > 0 && requested == 3) {
+                  final List<Raster> valid = await run(0);
+                  expect(
+                    pixelDifference(valid[1], unselected[1]),
+                    greaterThan(0),
+                    reason: 'a valid current-list index must still highlight',
+                  );
+                  final Rgba settledBorder = valid.last.at(240, 3);
+                  expect(
+                    (
+                      settledBorder.r,
+                      settledBorder.g,
+                      settledBorder.b,
+                      settledBorder.a,
+                    ),
+                    (0, 0, 0, 255),
+                    reason:
+                        'valid selected border must be visible after shrink',
+                  );
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
     testWidgets('F18 topology preserves premultiplied color over a backdrop', (
       WidgetTester tester,
     ) async {
@@ -4205,6 +5114,49 @@ void main() {
 // ===========================================================================
 // Shared test plumbing
 // ===========================================================================
+
+// Independent whole-segment control: ask the renderer to compose each source
+// before applying the group's opacity, preserving the supplied color spaces.
+class _BorderCompositionReference extends CustomPainter {
+  const _BorderCompositionReference({
+    required this.fill,
+    required this.border,
+    required this.surface,
+    required this.segmentOpacity,
+    required this.lineOpacity,
+  });
+
+  final Color fill;
+  final Color border;
+  final Color surface;
+  final double segmentOpacity;
+  final double lineOpacity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect bounds = Offset.zero & size;
+    canvas.drawRect(bounds, Paint()..color = surface);
+    canvas.saveLayer(
+      bounds,
+      Paint()
+        ..color = const Color(0xFFFFFFFF).withValues(alpha: segmentOpacity),
+    );
+    canvas.drawRect(bounds, Paint()..color = fill);
+    canvas.drawRect(
+      bounds,
+      Paint()..color = border.withValues(alpha: border.a * lineOpacity),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_BorderCompositionReference oldDelegate) =>
+      fill != oldDelegate.fill ||
+      border != oldDelegate.border ||
+      surface != oldDelegate.surface ||
+      segmentOpacity != oldDelegate.segmentOpacity ||
+      lineOpacity != oldDelegate.lineOpacity;
+}
 
 Future<void> pump(WidgetTester tester, GlobalKey key, Widget ring) async {
   await tester.pumpWidget(

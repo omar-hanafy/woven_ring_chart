@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show ColorSpace;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
@@ -109,7 +110,10 @@ class WovenRingChartPainter extends CustomPainter {
         // Surface replacement owns the chart's pixels, not its ancestor's
         // canvas. A RepaintBoundary records drawing but does not isolate src
         // blending; keep transparent surfaces from erasing a parent backdrop.
-        final bool replacesSurface = segments.any(_isTranslucent);
+        final bool replacesSurface = <int>[
+          for (var i = 0; i < segments.length; i++)
+            if (fractions[i] > 0) i,
+        ].any((int i) => _isTranslucent(segments[i]));
         if (replacesSurface) {
           canvas.saveLayer(Offset.zero & size, Paint());
         }
@@ -208,8 +212,7 @@ class WovenRingChartPainter extends CustomPainter {
       (double total, double fraction) => total + fraction,
     );
     final bool fadesToEmpty = fractionTotal < 0.999;
-    if (fadesToEmpty ||
-        segments.any((WovenSegment segment) => segment.opacity < 0.999)) {
+    if (fadesToEmpty || active.any((int i) => segments[i].opacity < 0.999)) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
     }
     if (fadesToEmpty) {
@@ -257,16 +260,6 @@ class WovenRingChartPainter extends CustomPainter {
       );
       if (!visibleEnd.isNaN) {
         _paintSmoothSingle(canvas, g, index, head, visibleEnd: visibleEnd);
-        if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
-          canvas.save();
-          if ((visibleEnd - head).abs() < _tau - 1e-9) {
-            canvas.clipPath(
-              g.segmentPath(head, visibleEnd, clockwise: style.clockwise),
-            );
-          }
-          _paintSingleJoint(canvas, g, head, segments[index].opacity);
-          canvas.restore();
-        }
       }
       if (fadesToEmpty) canvas.restore();
       return;
@@ -358,6 +351,14 @@ class WovenRingChartPainter extends CustomPainter {
       for (final Path? lap in laps) lap == null ? null : _outsidePath(g, lap),
     ];
 
+    // Resolve raw ink first, independently of the common surface. Replacing
+    // a surface and then drawing a fill applies the same antialiased cap
+    // coverage twice and opens alpha seams inside an already covered ring.
+    // Source replacement keeps each complete ink sample at its own opacity;
+    // the common surface is composed once after ownership has been resolved.
+    final bool composeFills = active.any(
+      (int i) => _isTranslucent(segments[i]),
+    );
     // Coverage underlay. Borders and shadow are deliberately omitted: covered
     // tails have neither, even while their successor is translucent.
     for (var position = 0; position < paintOrder.length; position++) {
@@ -373,6 +374,7 @@ class WovenRingChartPainter extends CustomPainter {
         shaderEnd: extents[i].end,
         paintShadow: false,
         paintBorder: false,
+        replaceFill: composeFills,
       );
     }
 
@@ -389,9 +391,6 @@ class WovenRingChartPainter extends CustomPainter {
       if (outsideSuccessor != null) {
         canvas.clipPath(outsideSuccessor, doAntiAlias: false);
       }
-      if (_isTranslucent(segments[i])) {
-        _paintSurface(canvas, path);
-      }
       _paintSegment(
         canvas,
         g,
@@ -401,6 +400,7 @@ class WovenRingChartPainter extends CustomPainter {
         shaderEnd: extents[i].end,
         paintShadow: false,
         paintBorder: false,
+        replaceFill: composeFills,
       );
       canvas.restore();
     }
@@ -420,13 +420,9 @@ class WovenRingChartPainter extends CustomPainter {
         visiblePaths.every((Path? path) => path != null)) {
       final int anchorPosition = cycleAnchorPosition;
       final int anchor = paintOrder[anchorPosition];
-      final Path anchorPath = visiblePaths[anchorPosition]!;
       canvas.save();
       for (final Path? path in visiblePaths) {
         canvas.clipPath(path!, doAntiAlias: false);
-      }
-      if (_isTranslucent(segments[anchor])) {
-        _paintSurface(canvas, anchorPath);
       }
       _paintSegment(
         canvas,
@@ -437,6 +433,7 @@ class WovenRingChartPainter extends CustomPainter {
         shaderEnd: extents[anchor].end,
         paintShadow: false,
         paintBorder: false,
+        replaceFill: composeFills,
       );
       canvas.restore();
     }
@@ -478,7 +475,11 @@ class WovenRingChartPainter extends CustomPainter {
       // Preserve the original order among retained clips, including the seam.
       masks.sort();
     }
-    void paintLaps({required bool fill}) {
+    void paintLaps({
+      required bool fill,
+      List<Color?>? borderColors,
+      List<Color?>? borderSurfaces,
+    }) {
       for (var position = 0; position < paintOrder.length; position++) {
         final Path? path = visiblePaths[position];
         final Path? lap = laps[position];
@@ -491,7 +492,6 @@ class WovenRingChartPainter extends CustomPainter {
           canvas.clipPath(outsideLaps[other]!, doAntiAlias: false);
         }
         if (!fill) canvas.drawPaint(Paint()..blendMode = BlendMode.clear);
-        if (fill && _isTranslucent(segments[i])) _paintSurface(canvas, path);
         _paintSegment(
           canvas,
           g,
@@ -501,50 +501,86 @@ class WovenRingChartPainter extends CustomPainter {
           shaderEnd: extents[i].end,
           paintShadow: false,
           paintFill: fill,
-          paintBorder: !fill,
+          replaceFill: fill && composeFills,
+          paintBorder:
+              !fill && (borderColors == null || borderColors[i] != null),
+          borderColor: borderColors?[i],
+          borderSurface: borderSurfaces?[i],
         );
         canvas.restore();
       }
     }
 
     paintLaps(fill: true);
+    if (composeFills && style.surfaceColor.a > 0) {
+      // Non-full-turn silhouettes have consistent winding. Their nonzero
+      // fill gives the visible coverage union without native path operations.
+      // A full annulus instead retains its even-odd hole explicitly.
+      Path coverage = Path()..fillType = PathFillType.nonZero;
+      for (var position = 0; position < paintOrder.length; position++) {
+        final Path? path = visiblePaths[position];
+        if (path == null) continue;
+        if ((visibleEnds[position] - extents[paintOrder[position]].start)
+                .abs() >=
+            _tau - 1e-9) {
+          coverage = g.annulus();
+          break;
+        }
+        coverage.addPath(path, Offset.zero);
+      }
+      canvas.drawPath(
+        coverage,
+        Paint()
+          ..color = style.surfaceColor
+          ..blendMode = BlendMode.dstOver
+          ..isAntiAlias = true,
+      );
+    }
 
     // A shadow is visible only on the predecessor and only where neither the
     // segment casting it nor its successor covers it. This keeps shadows out of
     // the hole and prevents a covered head from leaking through a later one.
+    final Path? shadowOutsideRing = style.shadow == null
+        ? null
+        : _outsidePath(g, g.annulus());
+    final List<Path?>? shadowReceivers = style.shadow == null
+        ? null
+        : List<Path?>.filled(paintOrder.length, null);
+    void paintShadow(int position) {
+      final Path? path = visiblePaths[position];
+      final Path? predecessor =
+          visiblePaths[(position - 1 + paintOrder.length) % paintOrder.length];
+      if (path == null || predecessor == null) return;
+      final Path? outsideCurrent = outsidePaths[position];
+      final Path? outsideSuccessor =
+          outsidePaths[(position + 1) % paintOrder.length];
+      final int i = paintOrder[position];
+      final double opacity = segments[i].opacity.isFinite
+          ? segments[i].opacity.clamp(0.0, 1.0)
+          : 1.0;
+      final Path receiver = shadowReceivers![position] ??= Path.combine(
+        PathOperation.union,
+        predecessor,
+        shadowOutsideRing!,
+      );
+      canvas.save();
+      // The tight shadow lands on the predecessor inside the ring and may
+      // breathe just beyond the outer circle. _paintShadow applies the hole
+      // mask afterwards, so the exterior allowance can never leak inward.
+      canvas.clipPath(receiver, doAntiAlias: false);
+      if (outsideCurrent != null) {
+        canvas.clipPath(outsideCurrent, doAntiAlias: false);
+      }
+      if (paintOrder.length != 2 && outsideSuccessor != null) {
+        canvas.clipPath(outsideSuccessor, doAntiAlias: false);
+      }
+      _paintShadow(canvas, g, extents[i].start, opacity);
+      canvas.restore();
+    }
+
     if (style.shadow != null) {
-      final Path outsideRing = _outsidePath(g, g.annulus());
       for (var position = 0; position < paintOrder.length; position++) {
-        final Path? path = visiblePaths[position];
-        final Path? predecessor =
-            visiblePaths[(position - 1 + paintOrder.length) %
-                paintOrder.length];
-        if (path == null || predecessor == null) continue;
-        final Path? outsideCurrent = outsidePaths[position];
-        final Path? outsideSuccessor =
-            outsidePaths[(position + 1) % paintOrder.length];
-        final int i = paintOrder[position];
-        final double opacity = segments[i].opacity.isFinite
-            ? segments[i].opacity.clamp(0.0, 1.0)
-            : 1.0;
-        final Path receiver = Path.combine(
-          PathOperation.union,
-          predecessor,
-          outsideRing,
-        );
-        canvas.save();
-        // The tight shadow lands on the predecessor inside the ring and may
-        // breathe just beyond the outer circle. _paintShadow applies the hole
-        // mask afterwards, so the exterior allowance can never leak inward.
-        canvas.clipPath(receiver, doAntiAlias: false);
-        if (outsideCurrent != null) {
-          canvas.clipPath(outsideCurrent, doAntiAlias: false);
-        }
-        if (paintOrder.length != 2 && outsideSuccessor != null) {
-          canvas.clipPath(outsideSuccessor, doAntiAlias: false);
-        }
-        _paintShadow(canvas, g, extents[i].start, opacity);
-        canvas.restore();
+        paintShadow(position);
       }
     }
 
@@ -554,10 +590,14 @@ class WovenRingChartPainter extends CustomPainter {
     // body mask and a lap, but its requested
     // opacity must blend over the fill only once. Clearing the whole region
     // also removes a predecessor's line when a borderless head takes it.
-    if (active.any((int i) => _borderFor(i) != null)) {
+    void paintBorders({
+      BlendMode blendMode = BlendMode.srcOver,
+      List<Color?>? colors,
+      List<Color?>? surfaces,
+    }) {
       canvas.saveLayer(
         Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2),
-        Paint(),
+        Paint()..blendMode = blendMode,
       );
       for (var position = 0; position < paintOrder.length; position++) {
         final Path? path = visiblePaths[position];
@@ -580,12 +620,197 @@ class WovenRingChartPainter extends CustomPainter {
           shaderEnd: extents[i].end,
           paintShadow: false,
           paintFill: false,
+          paintBorder: colors == null || colors[i] != null,
+          borderColor: colors?[i],
+          borderSurface: surfaces?[i],
         );
         canvas.restore();
       }
 
-      paintLaps(fill: false);
+      paintLaps(fill: false, borderColors: colors, borderSurfaces: surfaces);
       canvas.restore();
+    }
+
+    if (active.any((int i) => _borderFor(i) != null)) {
+      final bool hasPartialBorder = active.any(
+        (int i) =>
+            segments[i].opacity > 0 &&
+            segments[i].opacity < 1 &&
+            _borderFor(i) != null,
+      );
+      if (!hasPartialBorder) {
+        paintBorders();
+        if (fadesToEmpty) canvas.restore();
+        return;
+      }
+      final List<Color?> masks = List<Color?>.filled(n, null);
+      final List<Color?> sources = List<Color?>.filled(n, null);
+      final List<Color?> surfaces = List<Color?>.filled(n, null);
+      final List<Color?> ordinary = List<Color?>.filled(n, null);
+      var needsOwnerGroups = false;
+      for (final int i in active) {
+        final WovenBorder? border = _borderFor(i);
+        if (border == null) continue;
+        final WovenSegment segment = segments[i];
+        final double opacity = segment.opacity.isFinite
+            ? segment.opacity.clamp(0.0, 1.0)
+            : 1.0;
+        final Color color = border.resolve(segment.fill, style.surfaceColor);
+        if (opacity > 0 &&
+            opacity < 1 &&
+            color.a * border.resolvedOpacity > 0) {
+          if (<Color>[
+            color,
+            style.surfaceColor,
+            segment.fill.head,
+            segment.fill.tail,
+          ].any((Color color) => color.colorSpace != ColorSpace.sRGB)) {
+            needsOwnerGroups = true;
+            continue;
+          }
+          // D is the already painted fill over surface S, B is the border
+          // including its own alpha, and p is whole-segment opacity. The
+          // grouped result is D*(1-B.a) + p*B + (1-p)*B.a*S. Two owned border
+          // layers express that exactly: remove the unscaled border coverage,
+          // then add the weighted border and surface. Incoming shadows remain
+          // below the border, and no segment needs a separate offscreen layer.
+          masks[i] = _withOpacity(color, border.resolvedOpacity);
+          // Convert each color in the renderer before combining them. An
+          // encoded-channel CPU blend changes the result for wide-gamut inks
+          // and surfaces because color conversion and blending do not commute.
+          final double weight = (opacity * 255).round() / 255;
+          sources[i] = _withOpacity(color, weight * border.resolvedOpacity);
+          surfaces[i] = _withOpacity(
+            style.surfaceColor,
+            (1 - weight) * color.a * border.resolvedOpacity,
+          );
+        } else {
+          ordinary[i] = _withOpacity(color, opacity * border.resolvedOpacity);
+        }
+      }
+      if (!needsOwnerGroups && masks.any((Color? color) => color != null)) {
+        // Every pass clears all owner regions, including borderless heads.
+        // This keeps the same body/lap ownership as the ordinary border pass.
+        if (ordinary.any((Color? color) => color != null)) {
+          paintBorders(colors: ordinary);
+        }
+        paintBorders(blendMode: BlendMode.dstOut, colors: masks);
+        paintBorders(
+          blendMode: BlendMode.plus,
+          colors: sources,
+          surfaces: surfaces,
+        );
+      } else if (!needsOwnerGroups) {
+        paintBorders();
+      }
+
+      if (needsOwnerGroups) {
+        // Conversion into the canvas can clip wide-gamut components. Render
+        // complete owners before applying opacity, so that clipping happens
+        // at the same point as it does for a single grouped segment. Every
+        // owner reuses this shared layer; no per-segment layer is allocated.
+        // Include ordinary and borderless owners in this fallback, so each
+        // surface reset has the same final body/lap owner as its content.
+        final Rect bounds = Rect.fromLTWH(
+          0,
+          0,
+          g.center.dx * 2,
+          g.center.dy * 2,
+        );
+        void paintGroups({
+          bool surface = false,
+          bool shadowCorrection = false,
+        }) {
+          for (final bool lapPass in <bool>[false, true]) {
+            for (var position = 0; position < paintOrder.length; position++) {
+              final Path? path = visiblePaths[position];
+              final Path? lap = laps[position];
+              if (path == null || (lapPass && lap == null)) continue;
+              final int i = paintOrder[position];
+              canvas.save();
+              canvas.clipPath(path, doAntiAlias: false);
+              if (lapPass) {
+                canvas.clipPath(lap!, doAntiAlias: false);
+                for (final int other in lapMasks[position]) {
+                  canvas.clipPath(outsideLaps[other]!, doAntiAlias: false);
+                }
+              } else {
+                final Path? outsideSuccessor =
+                    outsidePaths[(position + 1) % paintOrder.length];
+                if (outsideSuccessor != null) {
+                  canvas.clipPath(outsideSuccessor, doAntiAlias: false);
+                }
+              }
+              if (!surface) {
+                canvas.drawPaint(Paint()..blendMode = BlendMode.clear);
+              }
+              if (surface) {
+                _paintSurface(canvas, path);
+              } else {
+                final double opacity = segments[i].opacity.isFinite
+                    ? segments[i].opacity.clamp(0.0, 1.0)
+                    : 1.0;
+                if (!shadowCorrection) {
+                  _paintSegment(
+                    canvas,
+                    g,
+                    i,
+                    extents[i].start,
+                    visibleEnds[position],
+                    shaderEnd: extents[i].end,
+                    paintShadow: false,
+                    paintBorder: false,
+                    opacityOverride: 1,
+                  );
+                }
+                if (style.shadow != null) {
+                  paintShadow((position + 1) % paintOrder.length);
+                }
+                _paintSegment(
+                  canvas,
+                  g,
+                  i,
+                  extents[i].start,
+                  visibleEnds[position],
+                  shaderEnd: extents[i].end,
+                  paintShadow: false,
+                  paintFill: false,
+                  paintBorder: opacity > 0,
+                  opacityOverride: 1,
+                  borderBlendMode: shadowCorrection
+                      ? BlendMode.dstOut
+                      : BlendMode.srcOver,
+                );
+                final int alpha = (opacity * 255).round();
+                canvas.drawPaint(
+                  Paint()
+                    ..blendMode = BlendMode.dstIn
+                    ..color = Color.fromARGB(
+                      shadowCorrection ? 255 - alpha : alpha,
+                      255,
+                      255,
+                      255,
+                    ),
+                );
+              }
+              canvas.restore();
+            }
+          }
+        }
+
+        paintGroups(surface: true);
+        canvas.saveLayer(bounds, Paint());
+        paintGroups();
+        if (style.shadow != null) {
+          // The incoming shadow belongs to its caster, not to this receiver.
+          // G contains fill -> shadow -> border. Add the missing shadow share
+          // H=(1-p)*(1-borderAlpha)*shadow before compositing p*G+H over S.
+          canvas.saveLayer(bounds, Paint()..blendMode = BlendMode.plus);
+          paintGroups(shadowCorrection: true);
+          canvas.restore();
+        }
+        canvas.restore();
+      }
     }
 
     if (fadesToEmpty) canvas.restore();
@@ -676,15 +901,25 @@ class WovenRingChartPainter extends CustomPainter {
             : null,
       );
     }
+    final WovenBorder? border = _borderFor(index);
+    final bool jointed =
+        style.singleSegmentStyle == WovenSingleSegmentStyle.jointed;
+    final bool composeSegment = opacity < 1 && (border != null || jointed);
+    final double paintOpacity = composeSegment ? 1.0 : opacity;
     final Paint fill = Paint()..isAntiAlias = true;
     // A sweep that has to close on itself wraps somewhere, and the wrap is a
     // straight radial line: the one edge shape this chart promises never to
     // show. Put the wrap exactly on the head's cap centre so the head's own lap
     // can bury it, the same way a successor's head buries its predecessor's
     // tail at every other joint.
-    final Shader? shader = _closedShaderFor(g, segment.fill, head, opacity);
+    final Shader? shader = _closedShaderFor(
+      g,
+      segment.fill,
+      head,
+      paintOpacity,
+    );
     if (shader == null) {
-      fill.color = _withOpacity(segment.fill.head, opacity);
+      fill.color = _withOpacity(segment.fill.head, paintOpacity);
     } else {
       fill.shader = shader;
     }
@@ -694,7 +929,14 @@ class WovenRingChartPainter extends CustomPainter {
         !segment.fill.isSolid &&
         style.gradientAxis == WovenGradientAxis.alongSegment;
     if (translucent) _paintSurface(canvas, ring);
-    if (composeLap) {
+    if (composeSegment) {
+      // Fill, its self-lap, border, and the optional self-joint are one
+      // segment. Apply the segment opacity once after they are combined.
+      canvas.saveLayer(
+        Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2),
+        Paint()..color = Color.fromARGB((opacity * 255).round(), 255, 255, 255),
+      );
+    } else if (composeLap) {
       // Compose the wrap and its lap as one translucent fill, then blend that
       // fill once over the surface. Replacing the lap inside this layer also
       // keeps its antialiased interior edge at the same effective opacity.
@@ -718,7 +960,7 @@ class WovenRingChartPainter extends CustomPainter {
         g,
         segment.fill,
         head - direction * g.capAngularExtent,
-        opacity,
+        paintOpacity,
       );
       if (lap != null) {
         canvas.save();
@@ -739,24 +981,31 @@ class WovenRingChartPainter extends CustomPainter {
         canvas.restore();
       }
     }
-    if (composeLap) canvas.restore();
+    if (composeLap && !composeSegment) canvas.restore();
 
-    final WovenBorder? border = _borderFor(index);
-    if (border == null) return;
-    canvas.save();
-    canvas.clipPath(ring);
-    canvas.drawPath(
-      _simplified(g, ring, head, end),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = border.resolvedWidthFraction * g.thickness * 2
-        ..color = _withOpacity(
-          border.resolve(segment.fill, style.surfaceColor),
-          opacity * border.resolvedOpacity,
-        )
-        ..isAntiAlias = true,
-    );
-    canvas.restore();
+    if (border != null) {
+      canvas.save();
+      canvas.clipPath(ring);
+      canvas.drawPath(
+        _simplified(g, ring, head, end),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = border.resolvedWidthFraction * g.thickness * 2
+          ..color = _withOpacity(
+            border.resolve(segment.fill, style.surfaceColor),
+            paintOpacity * border.resolvedOpacity,
+          )
+          ..isAntiAlias = true,
+      );
+      canvas.restore();
+    }
+    if (jointed) {
+      canvas.save();
+      if ((end - head).abs() < _tau - 1e-9) canvas.clipPath(ring);
+      _paintSingleJoint(canvas, g, head, paintOpacity);
+      canvas.restore();
+    }
+    if (composeSegment) canvas.restore();
   }
 
   void _paintSingleJoint(
@@ -807,12 +1056,17 @@ class WovenRingChartPainter extends CustomPainter {
     bool paintFill = true,
     bool paintBorder = true,
     bool composeSurface = false,
+    bool replaceFill = false,
+    Color? borderColor,
+    Color? borderSurface,
+    double? opacityOverride,
+    BlendMode borderBlendMode = BlendMode.srcOver,
   }) {
     final WovenSegment segment = segments[i];
-    final double opacity = segment.opacity.isFinite
-        ? segment.opacity.clamp(0.0, 1.0)
-        : 1.0;
-    if (opacity <= 0.0) {
+    final double opacity =
+        opacityOverride ??
+        (segment.opacity.isFinite ? segment.opacity.clamp(0.0, 1.0) : 1.0);
+    if (opacity <= 0.0 && !(replaceFill && paintFill)) {
       if (paintFill && composeSurface) {
         _paintSurface(canvas, g.segmentPath(a, b, clockwise: style.clockwise));
       }
@@ -828,7 +1082,9 @@ class WovenRingChartPainter extends CustomPainter {
       if (composeSurface && _isTranslucent(segment)) {
         _paintSurface(canvas, path);
       }
-      final Paint fill = Paint()..isAntiAlias = true;
+      final Paint fill = Paint()
+        ..isAntiAlias = true
+        ..blendMode = replaceFill ? BlendMode.src : BlendMode.srcOver;
       // Saturating the silhouette to an annulus must not relocate its head
       // or change the cap-to-cap gradient slope.
       final Shader? shader = _shaderFor(g, segment.fill, a, shaderEnd, opacity);
@@ -841,7 +1097,7 @@ class WovenRingChartPainter extends CustomPainter {
     }
 
     final WovenBorder? border = paintBorder ? _borderFor(i) : null;
-    if (border == null) return;
+    if (border == null || opacity <= 0) return;
 
     // Stroked at double width and clipped to the silhouette, so the line lands
     // entirely inside the segment. A bordered segment is never fatter than its
@@ -849,17 +1105,32 @@ class WovenRingChartPainter extends CustomPainter {
     final double width = border.resolvedWidthFraction * g.thickness;
     canvas.save();
     canvas.clipPath(path);
+    final Path outline = _simplified(g, path, a, b);
     canvas.drawPath(
-      _simplified(g, path, a, b),
+      outline,
       Paint()
         ..style = PaintingStyle.stroke
+        ..blendMode = borderBlendMode
         ..strokeWidth = width * 2
-        ..color = _withOpacity(
-          border.resolve(segment.fill, style.surfaceColor),
-          opacity * border.resolvedOpacity,
-        )
+        ..color =
+            borderColor ??
+            _withOpacity(
+              border.resolve(segment.fill, style.surfaceColor),
+              opacity * border.resolvedOpacity,
+            )
         ..isAntiAlias = true,
     );
+    if (borderSurface != null && borderSurface.a > 0) {
+      canvas.drawPath(
+        outline,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = width * 2
+          ..color = borderSurface
+          ..blendMode = BlendMode.plus
+          ..isAntiAlias = true,
+      );
+    }
     canvas.restore();
   }
 

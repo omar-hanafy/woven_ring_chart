@@ -207,24 +207,17 @@ class _WovenFrame {
 }
 
 // A canonical ring can move between logical indices while its visible style
-// morphs in place. Capture the border with its bounded derived-colour state at
-// each retarget rather than retaining earlier interpolation nodes. Logical
-// weights let a new highlight configuration act on the current style without
-// replaying that history.
+// morphs in place. Each logical index retains a bounded border substitution,
+// so highlighting replaces that index without changing other contributions.
 class _WovenVisualStyle {
   const _WovenVisualStyle.segment(this.segment, this.index)
-    : weights = const <int, double>{},
-      resolvedBorder = null,
-      highlightedIndex = null,
-      highlightBorder = null;
+    : substitutions = const <int, WovenBorderSubstitution>{};
 
   factory _WovenVisualStyle.lerp(
     _WovenVisualStyle a,
     _WovenVisualStyle b,
     double t,
     Color surfaceColor,
-    int? highlightedIndex,
-    WovenBorder highlightBorder,
   ) {
     final WovenSegment segment = WovenSegment.lerp(
       a.segment,
@@ -232,72 +225,59 @@ class _WovenVisualStyle {
       t,
       surfaceColor: surfaceColor,
     );
-    final Map<int, double> weights = <int, double>{};
-    void addWeights(_WovenVisualStyle style, double share) {
-      if (style.index != null) {
-        final int index = style.index!;
-        weights[index] = (weights[index] ?? 0) + share;
-      } else {
-        for (final MapEntry<int, double> entry in style.weights.entries) {
-          weights[entry.key] = (weights[entry.key] ?? 0) + entry.value * share;
-        }
-      }
+    // The destination is always a freshly resolved logical segment. Captured
+    // visual state occurs only at the source of a retargeted transition.
+    assert(b.index != null);
+    final substitutions = <int, WovenBorderSubstitution>{};
+    for (final selected in <int>{
+      ...a.substitutions.keys,
+      if (a.index != null) a.index!,
+      b.index!,
+    }) {
+      final previous =
+          a.substitutions[selected] ??
+          (a.index == selected
+              ? WovenBorderSubstitution.highlight(a.segment.fill, surfaceColor)
+              : WovenBorderSubstitution.border(
+                  a.segment.border,
+                  a.segment.fill,
+                  surfaceColor,
+                ));
+      substitutions[selected] = previous.lerpTo(
+        b.segment.border,
+        t,
+        replace: b.index == selected,
+        fill: segment.fill,
+        surface: surfaceColor,
+      );
     }
-
-    addWeights(a, 1 - t);
-    addWeights(b, t);
     return _WovenVisualStyle._(
       segment: segment,
-      weights: Map<int, double>.unmodifiable(weights),
-      resolvedBorder: WovenBorder.lerp(
-        a.borderFor(highlightedIndex, highlightBorder, surfaceColor),
-        b.borderFor(highlightedIndex, highlightBorder, surfaceColor),
-        t,
-        fill: segment.fill,
-        surfaceColor: surfaceColor,
+      substitutions: Map<int, WovenBorderSubstitution>.unmodifiable(
+        substitutions,
       ),
-      highlightedIndex: highlightedIndex,
-      highlightBorder: highlightBorder,
     );
   }
 
   const _WovenVisualStyle._({
     required this.segment,
-    required this.weights,
-    required this.resolvedBorder,
-    required this.highlightedIndex,
-    required this.highlightBorder,
+    required this.substitutions,
   }) : index = null;
 
   final WovenSegment segment;
   final int? index;
-  final Map<int, double> weights;
-  final WovenBorder? resolvedBorder;
-  final int? highlightedIndex;
-  final WovenBorder? highlightBorder;
-
-  WovenBorder? borderFor(
-    int? highlighted,
-    WovenBorder highlight,
-    Color surface,
-  ) {
-    if (index != null) return index == highlighted ? highlight : segment.border;
-    if (highlightedIndex == highlighted && highlightBorder == highlight) {
-      return resolvedBorder;
-    }
-    final double weight = (weights[highlighted] ?? 0).clamp(0.0, 1.0);
-    if (weight == 0) return segment.border;
-    return WovenBorder.lerp(
-      segment.border,
-      highlight,
-      weight,
-      fill: segment.fill,
-      surfaceColor: surface,
-    );
-  }
+  final Map<int, WovenBorderSubstitution> substitutions;
 
   WovenSegment resolve(int? highlighted, WovenBorder highlight, Color surface) {
-    final WovenBorder? border = borderFor(highlighted, highlight, surface);
+    final WovenBorder? border;
+    if (index != null) {
+      border = index == highlighted ? highlight : segment.border;
+    } else {
+      final substitution = substitutions[highlighted];
+      border = substitution == null
+          ? segment.border
+          : substitution.resolve(highlight, segment.fill, surface);
+    }
     return segment.copyWith(border: border, removeBorder: border == null);
   }
 }
@@ -319,6 +299,15 @@ class _WovenRingChartState extends State<WovenRingChart>
   );
   List<WovenSegment> _inputSnapshot = const <WovenSegment>[];
   bool _disableAnimations = false;
+
+  // A transition can retain outgoing entries beyond the current public list.
+  // They must not extend the range of selectable indices.
+  int? get _resolvedHighlightedIndex {
+    final int? index = widget.highlightedIndex;
+    return index != null && index >= 0 && index < widget.segments.length
+        ? index
+        : null;
+  }
 
   @override
   void initState() {
@@ -528,8 +517,6 @@ class _WovenRingChartState extends State<WovenRingChart>
         _visualStyleAt(to, toActive.single),
         t,
         widget.style.surfaceColor,
-        widget.highlightedIndex,
-        widget.highlightBorder,
       );
       // Both endpoints are the same full-circle topology. Interpolating their
       // logical indices as fractions would invent two woven heads, rotate the
@@ -615,14 +602,7 @@ class _WovenRingChartState extends State<WovenRingChart>
         WovenSegment.lerp(a, b, t, surfaceColor: widget.style.surfaceColor),
       );
       visualStyles?.add(
-        _WovenVisualStyle.lerp(
-          aStyle!,
-          bStyle!,
-          t,
-          widget.style.surfaceColor,
-          widget.highlightedIndex,
-          widget.highlightBorder,
-        ),
+        _WovenVisualStyle.lerp(aStyle!, bStyle!, t, widget.style.surfaceColor),
       );
       fractions.add(
         from.fractions[i] + (to.fractions[i] - from.fractions[i]) * t,
@@ -810,7 +790,7 @@ class _WovenRingChartState extends State<WovenRingChart>
                                 for (final _WovenVisualStyle s
                                     in frame.visualStyles!)
                                   s.resolve(
-                                    widget.highlightedIndex,
+                                    _resolvedHighlightedIndex,
                                     widget.highlightBorder,
                                     widget.style.surfaceColor,
                                   ),
@@ -826,7 +806,7 @@ class _WovenRingChartState extends State<WovenRingChart>
                         ),
                         spin: _spin.value,
                         highlightedIndex: frame.visualStyles == null
-                            ? widget.highlightedIndex
+                            ? _resolvedHighlightedIndex
                             : null,
                         highlightBorder: widget.highlightBorder,
                         topologyMerge: frame.topologyMerge,

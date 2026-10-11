@@ -18,16 +18,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy, even when normalization beside a much larger value underflows.
 - Keep charts without usable values idle during updates and controller replay,
   and stop an active entrance when animation is changed to `none`.
+- Keep dropped values from adding a neutral track during entrance animations.
 - Render very large finite start angles at their equivalent rotation without
   losing segment geometry or gradient continuity.
 - Apply translucency once to gradient overlaps, visible borders, and transitions
   between one and several segments. Keep opacity fades continuous through zero.
+- Apply segment opacity once to the combined fill, border, and self-joint,
+  including borders and surfaces in different colour spaces.
 - Preserve the parent background behind translucent chart surfaces.
+- Remove internal seams between translucent segments, including on web.
 - Keep gradients continuous through single-segment entrances and when the sole
   positive value moves to another position in the segment list.
 - Preserve head colours on long counterclockwise gradient segments.
 - Carry the destination highlight through transitions that collapse several
   segments into a previously empty position.
+- Ignore out-of-range highlight indices while a shrinking data list still has
+  fading outgoing segments.
+- Replace only the selected border's contribution when highlights change
+  during interrupted transitions.
 - Resolve surface-derived border colours immediately after interrupted data
   transitions.
 - Preserve overlap order across the seam in dense, thick rings.

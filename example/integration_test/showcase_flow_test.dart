@@ -877,7 +877,7 @@ void main() {
               : 2;
           expect(pixels[head + channel], greaterThan(240));
           expect(pixels[head + 2 - channel], lessThan(15));
-          expect(pixels[head + 1], 0);
+          // Green is checked by the dither-aware RGB enclosure below.
           expect(pixels[head + 3], 255);
           // Public geometry puts the head at -.25, its cap tip at
           // -.25-asin(.25), and the tail tip at .9*tau+asin(.25).
@@ -1463,6 +1463,736 @@ void main() {
       controller.dispose();
     }
   });
+  _flow('whole-segment opacity composes fill and border together', (
+    tester,
+  ) async {
+    final capture = find.byKey(_key('whole-opacity-capture'));
+    for (final count in [1, 4]) {
+      for (final surface in const [
+        Color(0x00000000),
+        Color(0x800000FF),
+        Color(0xFFFFFFFF),
+      ]) {
+        for (final opacity in [1.0, .5]) {
+          await _disposeApp(tester);
+          await tester.pumpWidget(
+            Directionality(
+              textDirection: TextDirection.ltr,
+              child: Center(
+                child: RepaintBoundary(
+                  key: _key('whole-opacity-capture'),
+                  child: SizedBox.square(
+                    dimension: 480,
+                    child: WovenRingChart(
+                      animation: WovenRingAnimation.none,
+                      style: WovenRingStyle(
+                        startAngle: 0,
+                        surfaceColor: surface,
+                      ),
+                      segments: [
+                        for (var index = 0; index < count; index++)
+                          WovenSegment(
+                            value: 1,
+                            fill: const WovenFill.solid(Color(0xFFFF0000)),
+                            opacity: opacity,
+                            border: const WovenBorder(
+                              color: Color(0xFF000000),
+                              widthFraction: .05,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          // Pixel centre radius236.50053 is3.49947px inside outer240,
+          // and1.30053px outside the inner edge of the4.8px border.
+          // The full-opacity reference proves fully covered black here.
+          final pixels = await _boundaryPixels(tester, capture);
+          const borderPixel = (240 * 480 + 476) * 4;
+          final expected = [
+            (255 * (1 - opacity) * surface.r * surface.a).round(),
+            (255 * (1 - opacity) * surface.g * surface.a).round(),
+            (255 * (1 - opacity) * surface.b * surface.a).round(),
+            (255 * (opacity + (1 - opacity) * surface.a)).round(),
+          ];
+          // One byte accommodates quantizing the composed layer's alpha;
+          // it cannot admit the old residual red64/alpha192 border result.
+          _expectPixelNear(pixels, borderPixel, expected, opacity == 1 ? 0 : 1);
+        }
+      }
+    }
+    await _disposeApp(tester);
+  });
+  _flow('ignored zero data preserves partial entrance pixels', (tester) async {
+    final framePolicy = binding.framePolicy;
+    binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.onlyPumps;
+    try {
+      final capture = find.byKey(_key('ignored-zero-capture'));
+      for (final animation in [
+        WovenRingAnimation.sweep,
+        WovenRingAnimation.grow,
+      ]) {
+        List<int>? base;
+        for (final withZero in [false, true]) {
+          await _disposeApp(tester);
+          final controller = WovenRingChartController();
+          try {
+            await tester.pumpWidget(
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Center(
+                  child: RepaintBoundary(
+                    key: _key('ignored-zero-capture'),
+                    child: SizedBox.square(
+                      dimension: 480,
+                      child: WovenRingChart(
+                        animation: animation,
+                        animationDuration: const Duration(seconds: 1),
+                        controller: controller,
+                        style: const WovenRingStyle(startAngle: 0),
+                        segments: [
+                          const WovenSegment(
+                            value: 1,
+                            fill: WovenFill.solid(Color(0xFFFF0000)),
+                          ),
+                          if (withZero)
+                            const WovenSegment(
+                              value: 0,
+                              fill: WovenFill.solid(Color(0xFF0000FF)),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await tester.pumpAndSettle();
+            controller.replay();
+            final startedAt = await _pumpTimestamp(tester);
+            final capturedAt = await _pumpTimestamp(
+              tester,
+              const Duration(milliseconds: 250),
+            );
+            final fraction = (capturedAt - startedAt).inMicroseconds / 1000000;
+            expect(fraction, greaterThan(0));
+            expect(fraction, lessThan(.3));
+            // At elapsed<.3, eased progress<.188. The revealed cap ends
+            // before1.19 radians; this far-side track point is near pi,
+            // over1.9 radians away and47.5px inside both annulus edges.
+            final image = tester
+                .renderObject<RenderRepaintBoundary>(capture)
+                .toImageSync(pixelRatio: 1);
+            try {
+              final pixels = await _imagePixels(image);
+              const farSide = (240 * 480 + 48) * 4;
+              final actual = pixels.sublist(farSide, farSide + 4);
+              if (withZero) {
+                expect(actual, base, reason: '$animation ignored zero');
+              } else {
+                expect(actual, [0, 0, 0, 0]);
+                base = actual;
+              }
+            } finally {
+              image.dispose();
+            }
+            await _disposeApp(tester);
+          } finally {
+            controller.dispose();
+          }
+        }
+      }
+    } finally {
+      binding.framePolicy = framePolicy;
+    }
+  });
+  _flow('mixed-gamut borders match the renderer opacity group', (tester) async {
+    const surface = Color(0xFFFF0000);
+    const ink = Color.from(
+      alpha: 1,
+      red: 0,
+      green: 1,
+      blue: 0,
+      colorSpace: ui.ColorSpace.displayP3,
+    );
+    final capture = find.byKey(_key('mixed-gamut-capture'));
+    Future<({List<int> boundary, List<int>? picture})> sample(
+      Widget content, {
+      int x = 476,
+      int y = 240,
+    }) async {
+      await _disposeApp(tester);
+      final isChart = content is WovenRingChart;
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Center(
+            child: RepaintBoundary(
+              key: _key('mixed-gamut-capture'),
+              child: SizedBox.square(
+                dimension: 480,
+                child: isChart
+                    ? content
+                    : RepaintBoundary(
+                        key: _key('mixed-gamut-reference'),
+                        child: content,
+                      ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final index = (y * 480 + x) * 4;
+      final ordinaryImage = tester
+          .renderObject<RenderRepaintBoundary>(capture)
+          .toImageSync(pixelRatio: 1);
+      final List<int> ordinary;
+      try {
+        final pixels = await _imagePixels(ordinaryImage);
+        ordinary = pixels.sublist(index, index + 4);
+      } finally {
+        ordinaryImage.dispose();
+      }
+      // Default boundary capture is the primary color contract. Also retain
+      // the actual native draw-list control; its float destination can have
+      // different gamut conversion/quantization behavior.
+      if (kIsWeb) return (boundary: ordinary, picture: null);
+      final pictureCapture = isChart
+          ? find.descendant(
+              of: find.byType(WovenRingChart),
+              matching: find.byType(RepaintBoundary),
+            )
+          : find.byKey(_key('mixed-gamut-reference'));
+      expect(pictureCapture, findsOneWidget);
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        pictureCapture,
+      );
+      expect(boundary.size, const Size(480, 480));
+      final layer = boundary.debugLayer;
+      expect(layer, isA<OffsetLayer>());
+      final offsetLayer = layer! as OffsetLayer;
+      expect(offsetLayer.offset, Offset.zero);
+      final child = offsetLayer.firstChild;
+      expect(child, isA<PictureLayer>());
+      expect(child!.nextSibling, isNull);
+      final picture = (child as PictureLayer).picture;
+      expect(picture, isNotNull);
+      final image = picture!.toImageSync(
+        480,
+        480,
+        targetFormat: ui.TargetPixelFormat.rgbaFloat32,
+      );
+      try {
+        final pixels = await _imagePixels(image);
+        return (boundary: ordinary, picture: pixels.sublist(index, index + 4));
+      } finally {
+        image.dispose();
+      }
+    }
+
+    void report(String name, ({List<int> boundary, List<int>? picture}) value) {
+      binding.reportData ??= <String, dynamic>{};
+      binding.reportData![name] = {
+        'boundary': value.boundary,
+        if (!kIsWeb) 'pictureFloat': value.picture,
+      };
+    }
+
+    WovenRingChart chart(int count) => WovenRingChart(
+      animation: WovenRingAnimation.none,
+      style: const WovenRingStyle(startAngle: 0, surfaceColor: surface),
+      segments: [
+        for (var index = 0; index < count; index++)
+          const WovenSegment(
+            value: 1,
+            fill: WovenFill.solid(Color(0xFF0000FF)),
+            opacity: .5,
+            border: WovenBorder(color: ink, widthFraction: .05),
+          ),
+      ],
+    );
+
+    // Pixel(476,240) is3.5px inside the outer radius and fully covered by
+    // the4.8px border. Both controls delegate gamut conversion to the renderer.
+    final saveLayerReference = await sample(
+      const CustomPaint(painter: _RendererOpacityReference(surface, ink)),
+    );
+    final dstInReference = await sample(
+      const CustomPaint(
+        painter: _RendererOpacityReference(surface, ink, dstIn: true),
+      ),
+    );
+    final single = await sample(chart(1));
+    final multi = await sample(chart(4));
+    report('mixed-gamut-save-layer-reference', saveLayerReference);
+    report('mixed-gamut-dst-in-reference', dstInReference);
+    report('mixed-gamut-single', single);
+    report('mixed-gamut-multi', multi);
+    for (final reference in [saveLayerReference, dstInReference]) {
+      expect(reference.boundary[3], 255);
+      expect(reference.boundary[0], greaterThan(0));
+      expect(reference.boundary[1], greaterThan(0));
+    }
+    // Native controls prove that saveLayer opacity restoration and dstIn
+    // scaling can quantize differently on the default8-bit target. Compare
+    // each chart to its independent primitive control with exact bytes.
+    expect(single.boundary, saveLayerReference.boundary);
+    expect(multi.boundary, dstInReference.boundary);
+    if (!kIsWeb) {
+      expect(dstInReference.picture, saveLayerReference.picture);
+      expect(single.picture, saveLayerReference.picture);
+      expect(multi.picture, saveLayerReference.picture);
+    }
+
+    const overlapColors = [
+      Color(0xFFFF0000),
+      Color(0xFF00FF00),
+      Color(0xFF0000FF),
+      Color(0xFFFFFF00),
+      Color(0xFFFF00FF),
+      Color(0xFF00FFFF),
+      Color(0xFFFFFFFF),
+      Color(0xFF000000),
+    ];
+    for (final clockwise in [true, false]) {
+      // The existing dense flow independently proves this mirrored point
+      // belongs to green owner1, >5px from every silhouette edge. Equivalent
+      // P3black on owner0 must not reset the later owner's visible lap.
+      final y = clockwise ? 174 : 305;
+      final directReference = await sample(
+        const CustomPaint(
+          painter: _RendererOpacityReference(
+            Color(0xFFFFFFFF),
+            Color(0xFF000000),
+            fill: Color(0xFF00FF00),
+            directAlpha: true,
+          ),
+        ),
+        x: 394,
+        y: y,
+      );
+      final groupedReference = await sample(
+        const CustomPaint(
+          painter: _RendererOpacityReference(
+            Color(0xFFFFFFFF),
+            Color(0xFF000000),
+            fill: Color(0xFF00FF00),
+            dstIn: true,
+          ),
+        ),
+        x: 394,
+        y: y,
+      );
+      for (final reference in [directReference, groupedReference]) {
+        expect(reference.boundary[3], 255);
+        expect(reference.boundary[1], 255);
+        expect(reference.boundary[0], reference.boundary[2]);
+        expect(reference.boundary[0], greaterThan(0));
+        expect(reference.boundary[0], lessThan(reference.boundary[1]));
+      }
+      report('mixed-lap-direct-reference-$clockwise', directReference);
+      report('mixed-lap-group-reference-$clockwise', groupedReference);
+      for (final groupedOwner in [false, true]) {
+        final actual = await sample(
+          WovenRingChart(
+            animation: WovenRingAnimation.none,
+            style: WovenRingStyle(
+              startAngle: 0,
+              clockwise: clockwise,
+              thicknessFraction: .30,
+              overlapFraction: 1,
+              surfaceColor: const Color(0xFFFFFFFF),
+            ),
+            segments: [
+              for (var index = 0; index < overlapColors.length; index++)
+                WovenSegment(
+                  value: 1,
+                  fill: WovenFill.solid(overlapColors[index]),
+                  opacity: .5,
+                  border: WovenBorder(
+                    color: groupedOwner && index == 0
+                        ? const Color.from(
+                            alpha: 1,
+                            red: 0,
+                            green: 0,
+                            blue: 0,
+                            colorSpace: ui.ColorSpace.displayP3,
+                          )
+                        : const Color(0xFF000000),
+                    widthFraction: .05,
+                  ),
+                ),
+            ],
+          ),
+          x: 394,
+          y: y,
+        );
+        report('mixed-lap-$clockwise-$groupedOwner', actual);
+        // Direct alpha=.5 and grouped byte alpha128/255 differ by.5/255.
+        // The independent controls establish the resulting exact renderer
+        // bytes rather than imposing bit identity across those two paths.
+        final reference = groupedOwner ? groupedReference : directReference;
+        expect(actual.boundary, reference.boundary);
+        if (!kIsWeb) expect(actual.picture, reference.picture);
+      }
+    }
+    await _disposeApp(tester);
+  });
+  _flow('shrinking data ignores highlights outside the current list', (
+    tester,
+  ) async {
+    final framePolicy = binding.framePolicy;
+    binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.onlyPumps;
+    try {
+      for (final remaining in [1, 2]) {
+        var count = 4;
+        int? highlightedIndex;
+        var tickersEnabled = true;
+        late StateSetter update;
+        final capture = find.byKey(_key('shrinking-highlight-capture'));
+        await tester.pumpWidget(
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: StatefulBuilder(
+              builder: (context, setState) {
+                update = setState;
+                return TickerMode(
+                  enabled: tickersEnabled,
+                  child: Center(
+                    child: RepaintBoundary(
+                      key: _key('shrinking-highlight-capture'),
+                      child: SizedBox.square(
+                        dimension: 480,
+                        child: WovenRingChart(
+                          animation: WovenRingAnimation.none,
+                          transitionDuration: const Duration(seconds: 1),
+                          highlightedIndex: highlightedIndex,
+                          highlightBorder: const WovenBorder(
+                            color: Color(0xFF000000),
+                            widthFraction: .05,
+                          ),
+                          segments: [
+                            for (final color in const [
+                              Color(0xFFFF0000),
+                              Color(0xFF00FF00),
+                              Color(0xFF0000FF),
+                              Color(0xFFFF00FF),
+                            ].take(count))
+                              WovenSegment.solid(1, color),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        update(() => count = remaining);
+        final startedAt = await _pumpTimestamp(tester);
+        final partialAt = await _pumpTimestamp(
+          tester,
+          const Duration(milliseconds: 300),
+        );
+        expect(partialAt - startedAt, greaterThan(Duration.zero));
+        expect(partialAt - startedAt, lessThan(const Duration(seconds: 1)));
+        update(() => tickersEnabled = false);
+        await tester.pump();
+        final fractions = List<double>.of(
+          _frame(tester, find.byType(WovenRingChart)).fractions,
+        );
+        expect(fractions, hasLength(4));
+        expect(fractions.last, greaterThan(0));
+        expect(fractions.last, lessThan(.25));
+        final base = await _boundaryPixels(tester, capture);
+        int changedBytes(Uint8List actual) {
+          expect(actual, hasLength(base.length));
+          var count = 0;
+          for (var index = 0; index < base.length; index++) {
+            if (actual[index] != base[index]) count++;
+          }
+          return count;
+        }
+
+        update(() => highlightedIndex = 3);
+        await tester.pump();
+        expect(
+          _frame(tester, find.byType(WovenRingChart)).fractions,
+          orderedEquals(fractions),
+        );
+        expect(
+          changedBytes(await _boundaryPixels(tester, capture)),
+          0,
+          reason: 'index3 is outside the current $remaining entries',
+        );
+        update(() => highlightedIndex = 0);
+        await tester.pump();
+        expect(
+          _frame(tester, find.byType(WovenRingChart)).fractions,
+          orderedEquals(fractions),
+        );
+        expect(
+          changedBytes(await _boundaryPixels(tester, capture)),
+          greaterThan(0),
+          reason: 'valid index0 must still highlight the frozen partial frame',
+        );
+        await _disposeApp(tester);
+      }
+    } finally {
+      binding.framePolicy = framePolicy;
+    }
+  });
+  _flow('retained selection replaces only its original border contribution', (
+    tester,
+  ) async {
+    final framePolicy = binding.framePolicy;
+    binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.onlyPumps;
+    try {
+      var active = 0;
+      int? highlightedIndex;
+      var tickersEnabled = true;
+      late StateSetter update;
+      const colors = [Color(0xFFFF0000), Color(0xFF0000FF), Color(0xFFFFFF00)];
+      final capture = find.byKey(_key('retained-selection-capture'));
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return TickerMode(
+                enabled: tickersEnabled,
+                child: Center(
+                  child: RepaintBoundary(
+                    key: _key('retained-selection-capture'),
+                    child: SizedBox.square(
+                      dimension: 480,
+                      child: WovenRingChart(
+                        animation: WovenRingAnimation.none,
+                        transitionDuration: const Duration(seconds: 1),
+                        highlightedIndex: highlightedIndex,
+                        highlightBorder: const WovenBorder(
+                          color: Color(0xFF00FF00),
+                          widthFraction: .05,
+                        ),
+                        segments: [
+                          for (var index = 0; index < colors.length; index++)
+                            WovenSegment(
+                              value: index == active ? 1 : 0,
+                              fill: const WovenFill.solid(Color(0xFFFFFFFF)),
+                              border: WovenBorder(
+                                color: colors[index],
+                                widthFraction: .05,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      update(() => active = 1);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      update(() => tickersEnabled = false);
+      await tester.pump();
+      Color borderColor() {
+        final frame = _frame(tester, find.byType(WovenRingChart));
+        final segment =
+            frame.segments[frame.fractions.indexWhere((f) => f > 0)];
+        return segment.border!.resolve(segment.fill, WovenPalette.surface);
+      }
+
+      final normal = borderColor();
+      expect(normal.r, greaterThan(0));
+      expect(normal.b, greaterThan(0));
+      expect(normal.g, 0);
+      final normalPixels = await _boundaryPixels(tester, capture);
+      update(() => highlightedIndex = 0);
+      await tester.pump();
+      final expected = borderColor();
+      // The red endpoint is replaced by green; the blue endpoint is unchanged.
+      expect(expected.r, 0);
+      expect(expected.g, closeTo(normal.r, 1e-12));
+      expect(expected.b, closeTo(normal.b, 1e-12));
+      final highlightedPixels = await _boundaryPixels(tester, capture);
+      update(() => highlightedIndex = null);
+      await tester.pump();
+      expect(
+        await _boundaryPixels(tester, capture),
+        orderedEquals(normalPixels),
+      );
+      update(() => active = 2);
+      await tester.pump();
+      expect(
+        await _boundaryPixels(tester, capture),
+        orderedEquals(normalPixels),
+      );
+      update(() => highlightedIndex = 0);
+      await tester.pump();
+      final retained = borderColor();
+      expect(retained.r, closeTo(expected.r, 1e-12));
+      expect(retained.g, closeTo(expected.g, 1e-12));
+      expect(retained.b, closeTo(expected.b, 1e-12));
+      expect(
+        await _boundaryPixels(tester, capture),
+        orderedEquals(highlightedPixels),
+        reason: 'retargeting a frozen frame must not alter live selection',
+      );
+      await _disposeApp(tester);
+    } finally {
+      binding.framePolicy = framePolicy;
+    }
+  });
+  _flow('equal translucent owners keep the interior annulus uniform', (
+    tester,
+  ) async {
+    for (final surface in [const Color(0x00000000), WovenPalette.surface]) {
+      for (final clockwise in [true, false]) {
+        final capture = find.byKey(_key('uniform-translucency-capture'));
+        Future<Uint8List> render(int count) async {
+          await _disposeApp(tester);
+          await tester.pumpWidget(
+            Directionality(
+              textDirection: TextDirection.ltr,
+              child: Center(
+                child: RepaintBoundary(
+                  key: _key('uniform-translucency-capture'),
+                  child: SizedBox.square(
+                    dimension: 480,
+                    child: WovenRingChart(
+                      animation: WovenRingAnimation.none,
+                      style: WovenRingStyle(
+                        surfaceColor: surface,
+                        clockwise: clockwise,
+                      ),
+                      segments: [
+                        for (var index = 0; index < count; index++)
+                          WovenSegment.solid(1, const Color(0x80FF0000)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          return _boundaryPixels(tester, capture);
+        }
+
+        final single = await render(1);
+        final four = await render(4);
+        var worst = 0;
+        var minimumAlpha = 255;
+        for (var y = 0; y < 480; y++) {
+          for (var x = 0; x < 480; x++) {
+            final radius =
+                (Offset(x + .5, y + .5) - const Offset(240, 240)).distance;
+            // Exclude only the true inner/outer silhouette; internal owner
+            // edges remain in the scan, where identical ink must stay uniform.
+            if (radius < 149 || radius > 235) continue;
+            final offset = (y * 480 + x) * 4;
+            minimumAlpha = math.min(minimumAlpha, four[offset + 3]);
+            for (var channel = 0; channel < 4; channel++) {
+              worst = math.max(
+                worst,
+                (four[offset + channel] - single[offset + channel]).abs(),
+              );
+            }
+          }
+        }
+        binding.reportData ??= <String, dynamic>{};
+        binding.reportData!['uniform-translucency-${surface.a}-$clockwise'] = {
+          'maximumChannelDifference': worst,
+          'minimumAlpha': minimumAlpha,
+        };
+        expect(
+          worst,
+          lessThanOrEqualTo(2),
+          reason: 'surface=$surface clockwise=$clockwise',
+        );
+        if (surface.a == 1) expect(minimumAlpha, 255);
+      }
+    }
+    await _disposeApp(tester);
+  });
+}
+
+// A primitive renderer control: compose P3 ink over the sRGB surface through
+// native layers, never through CPU arithmetic on encoded colour components.
+class _RendererOpacityReference extends CustomPainter {
+  const _RendererOpacityReference(
+    this.surface,
+    this.ink, {
+    this.fill = const Color(0xFF0000FF),
+    this.dstIn = false,
+    this.directAlpha = false,
+  });
+
+  final Color surface;
+  final Color ink;
+  final Color fill;
+  final bool dstIn;
+  final bool directAlpha;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = Offset.zero & size;
+    // Public default geometry: outer radius=.5*side, thickness=.2*side,
+    // inner radius=.3*side. Strokes sit inside the annulus at .05*thickness.
+    // The sampled dense point also lies well inside this primitive annulus.
+    final center = size.center(Offset.zero);
+    final outer = size.shortestSide * .5;
+    final inner = size.shortestSide * .3;
+    final width = size.shortestSide * .2 * .05;
+    final ring = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addOval(Rect.fromCircle(center: center, radius: outer))
+      ..addOval(Rect.fromCircle(center: center, radius: inner));
+    if (directAlpha) {
+      canvas.drawRect(bounds, Paint()..color = surface);
+      canvas.drawPath(ring, Paint()..color = fill.withValues(alpha: .5));
+      return;
+    }
+    canvas.saveLayer(bounds, Paint());
+    canvas.drawRect(bounds, Paint()..color = surface);
+    canvas.saveLayer(
+      bounds,
+      dstIn ? Paint() : (Paint()..color = const Color(0x80FFFFFF)),
+    );
+    canvas.drawPath(ring, Paint()..color = fill);
+    final border = Paint()
+      ..color = ink
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width;
+    canvas.drawCircle(center, outer - width / 2, border);
+    canvas.drawCircle(center, inner + width / 2, border);
+    if (dstIn) {
+      canvas.drawPaint(
+        Paint()
+          ..color = const Color(0x80FFFFFF)
+          ..blendMode = BlendMode.dstIn,
+      );
+    }
+    canvas.restore();
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_RendererOpacityReference oldDelegate) =>
+      surface != oldDelegate.surface || ink != oldDelegate.ink;
 }
 
 ValueKey<String> _key(String value) => ValueKey<String>(value);

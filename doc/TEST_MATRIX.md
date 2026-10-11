@@ -73,6 +73,8 @@ Then, measured rather than assumed:
   the successor head's cap centre, sampled at eighteen radii across the ring.
 - Dense rings at maximum thickness and overlap preserve cyclic successor
   ownership across the seam, including borders and partially visible heads.
+- Identical translucent segments stay uniform across every internal boundary
+  on transparent, partially transparent, and opaque surfaces.
 - Nothing paints outside the silhouette, measured below the pixel. The ring
   probe two pixels clear of each edge cannot see a stroke that spills less than
   a whole pixel, and a stroke centred on the boundary spills exactly half its
@@ -99,6 +101,7 @@ Then, measured rather than assumed:
   pinned by its own check that walks seven radii across the whole ring, so a
   seam mark cannot come back by way of a changed default.
 - All-zero data falls back to the empty track without painting any segment.
+- Dropped values do not change a populated ring's entrance or settled rendering.
 
 ## 4. Motion (catalog sections E, F)
 
@@ -124,8 +127,13 @@ Then, measured rather than assumed:
   opens a gap.
 - Surface-derived borders respond immediately to surface changes, including
   interrupted data transitions and highlights.
+- Changing a retained highlight replaces only its logical border contribution;
+  changing selection before or after a retarget preserves the same frame.
 - Translucent one-to-many and many-to-one transitions preserve the requested
   alpha on transparent and partially transparent surfaces.
+- Segment opacity fades the combined fill and border once, including highlighted
+  borders, differing fill and surface colours, partially transparent colours,
+  and mixed colour spaces.
 - Moving the sole positive value or collapsing into a previously empty position
   carries the destination gradient and highlight continuously. Repeated retargets
   keep bounded visual state.
@@ -138,6 +146,8 @@ Then, measured rather than assumed:
 - Aggregate and per-segment semantics are both reachable, and adding a per-segment
   label does not take the centre away from assistive technology.
 - Mutating a reused list instance is still picked up.
+- Highlight indices are bounded by the current input list even while an
+  interrupted transition retains outgoing segments.
 
 ## 6. Manual runtime gate
 
