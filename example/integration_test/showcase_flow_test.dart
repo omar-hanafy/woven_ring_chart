@@ -27,7 +27,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const snippet.MyApp());
-    await tester.pump(const Duration(milliseconds: 1200));
+    await tester.pumpAndSettle();
     expect(find.text('100'), findsOneWidget);
     expect(find.bySemanticsLabel('Spending by category'), findsOneWidget);
     final chart = tester.widget<WovenRingChart>(find.byType(WovenRingChart));
