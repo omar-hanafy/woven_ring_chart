@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -26,7 +27,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const snippet.MyApp());
-    await tester.pump(const Duration(milliseconds: 1200));
+    await tester.pumpAndSettle();
     expect(find.text('100'), findsOneWidget);
     expect(find.bySemanticsLabel('Spending by category'), findsOneWidget);
     final chart = tester.widget<WovenRingChart>(find.byType(WovenRingChart));
@@ -2431,12 +2432,19 @@ _timedFrames(
     }
 
     final framePolicy = binding.framePolicy;
+    final previousDilation = timeDilation;
     try {
+      // Slow only the final interval, so its unchanged 3% animation window
+      // spans 480ms of display time for a one-second animation. The scheduler
+      // preserves elapsed time when changing dilation; tickers and this
+      // observer still consume the same genuine, adjusted frame timestamps.
+      timeDilation = 16;
       binding.addPostFrameCallback(observeLastFrame);
       binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
       await tester.pumpAndSettle();
     } finally {
       observing = false;
+      timeDilation = previousDilation;
       binding.framePolicy = framePolicy;
     }
     expect(
