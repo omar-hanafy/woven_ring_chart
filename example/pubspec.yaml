@@ -6,20 +6,25 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.12.2
+  sdk: ^3.13.5
+  flutter: ">=3.47.7"
 
 dependencies:
+  cupertino_icons: ^2.0.0
   flutter:
     sdk: flutter
+  material_ui: ^1.6.0
   # Only so the showcase's pub.dev and GitHub links open. The package itself
   # has no dependencies beyond Flutter.
-  url_launcher: ^6.3.1
+  url_launcher: ^6.3.3
   woven_ring_chart:
     path: ../
 
 dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
 flutter:

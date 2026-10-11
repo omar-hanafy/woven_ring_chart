@@ -5,12 +5,497 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:woven_ring_chart/src/model/chart_mode.dart';
+import 'package:woven_ring_chart/src/painting/ring_painter.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 const double _side = 240;
 const double _center = _side / 2;
 
 void main() {
+  testWidgets('sole visible index handoffs morph one canonical ring', (
+    WidgetTester tester,
+  ) async {
+    const List<int> times = <int>[0, 1, 120, 240, 360, 479, 480];
+    final List<String> failures = <String>[];
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final int source in <int>[0, 1]) {
+        for (final Color surface in <Color>[
+          WovenPalette.surface,
+          const Color(0x00000000),
+          const Color(0x80102030),
+        ]) {
+          final bool translucent = surface != WovenPalette.surface;
+          final WovenRingStyle style = WovenRingStyle(
+            clockwise: clockwise,
+            startAngle: 0.287,
+            surfaceColor: surface,
+            singleSegmentStyle: WovenSingleSegmentStyle.jointed,
+            shadow: const WovenShadow(),
+          );
+          for (final int? highlighted in <int?>[
+            null,
+            if (!translucent) source,
+            if (!translucent) 1 - source,
+          ]) {
+            final WovenSegment from = _handoffSegment(source, translucent);
+            final WovenSegment to = _handoffSegment(1 - source, translucent);
+            await tester.pumpWidget(const SizedBox.shrink());
+            final GlobalKey key = GlobalKey();
+            WovenRingChart chart(int active) => _handoffChart(
+              active: active,
+              style: style,
+              translucent: translucent,
+              highlighted: highlighted,
+            );
+            await _pumpRing(tester, key, chart(source));
+            final _Raster before = await _capture(tester, key);
+            await _pumpRing(tester, key, chart(1 - source));
+            final List<_Raster> frames = <_Raster>[];
+            for (var i = 0; i < times.length; i++) {
+              if (i > 0) {
+                await tester.pump(
+                  Duration(milliseconds: times[i] - times[i - 1]),
+                );
+              }
+              frames.add(await _capture(tester, key));
+            }
+            final String context =
+                'clockwise=$clockwise source=$source surface=$surface '
+                'highlighted=$highlighted';
+            expect(
+              _pixelMismatchCount(before, frames.first),
+              0,
+              reason: context,
+            );
+            final double first = _frameDelta(frames[0], frames[1]).mean;
+            final double last = _frameDelta(frames[5], frames[6]).mean;
+            if (first >= 1.5 || last >= 1.5) {
+              failures.add('$context first1ms=$first last1ms=$last');
+            }
+            for (var i = 0; i < times.length; i++) {
+              final double t = Curves.easeInOut.transform(times[i] / 480);
+              final WovenSegment expectedSegment = WovenSegment.lerp(
+                _highlightedHandoffSegment(from, source, highlighted),
+                _highlightedHandoffSegment(to, 1 - source, highlighted),
+                t,
+                surfaceColor: surface,
+              );
+              final _Raster reference = await _render(
+                tester,
+                _handoffReference(expectedSegment, style),
+              );
+              final int different = _pixelMismatchCount(frames[i], reference);
+              if (different != 0) {
+                failures.add(
+                  '$context time=${times[i]} canonicalMismatch=$different',
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(failures, isEmpty, reason: failures.take(20).join('\n'));
+  });
+
+  testWidgets('sole index handoff retargeting preserves the visible style', (
+    WidgetTester tester,
+  ) async {
+    final List<String> failures = <String>[];
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final int source in <int>[0, 2]) {
+        for (final int destination in <int>[source, 2 - source]) {
+          final WovenRingStyle style = WovenRingStyle(
+            clockwise: clockwise,
+            startAngle: 0.287,
+            surfaceColor: const Color(0x00000000),
+            shadow: const WovenShadow(),
+          );
+          await tester.pumpWidget(const SizedBox.shrink());
+          final GlobalKey key = GlobalKey();
+          WovenRingChart chart(int active) => _handoffChart(
+            active: active,
+            count: 3,
+            style: style,
+            translucent: true,
+            highlighted: 1,
+          );
+          await _pumpRing(tester, key, chart(source));
+          await _pumpRing(tester, key, chart(1));
+          await tester.pump(const Duration(milliseconds: 192));
+          final _Raster before = await _capture(tester, key);
+          await _pumpRing(tester, key, chart(destination));
+          final _Raster immediate = await _capture(tester, key);
+          expect(_pixelMismatchCount(before, immediate), 0);
+          final List<int> times = <int>[1, 120, 240, 479, 480];
+          final List<_Raster> frames = <_Raster>[];
+          for (var i = 0; i < times.length; i++) {
+            await tester.pump(
+              Duration(milliseconds: times[i] - (i == 0 ? 0 : times[i - 1])),
+            );
+            frames.add(await _capture(tester, key));
+          }
+          final WovenSegment current = WovenSegment.lerp(
+            _handoffSegment(source, true),
+            _highlightedHandoffSegment(_handoffSegment(1, true), 1, 1),
+            Curves.easeInOut.transform(0.4),
+            surfaceColor: style.surfaceColor,
+          );
+          final WovenSegment target = _handoffSegment(destination, true);
+          for (var i = 0; i < times.length; i++) {
+            final WovenSegment expected = WovenSegment.lerp(
+              current,
+              target,
+              Curves.easeInOut.transform(times[i] / 480),
+              surfaceColor: style.surfaceColor,
+            );
+            final _Raster reference = await _render(
+              tester,
+              _handoffReference(expected, style),
+            );
+            final int different = _pixelMismatchCount(frames[i], reference);
+            if (different != 0) {
+              failures.add(
+                'clockwise=$clockwise source=$source target=$destination '
+                'time=${times[i]} canonicalMismatch=$different',
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(failures, isEmpty, reason: failures.take(16).join('\n'));
+  });
+
+  testWidgets('sole index handoff preserves an interrupted empty fade', (
+    WidgetTester tester,
+  ) async {
+    for (final bool clockwise in <bool>[true, false]) {
+      final WovenRingStyle style = WovenRingStyle(
+        clockwise: clockwise,
+        startAngle: 0.287,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      final GlobalKey key = GlobalKey();
+      WovenRingChart chart(int? active) => _handoffChart(
+        active: active,
+        style: style,
+        translucent: false,
+        highlighted: null,
+      );
+      await _pumpRing(tester, key, chart(1));
+      await _pumpRing(tester, key, chart(null));
+      await tester.pump(const Duration(milliseconds: 240));
+      final _Raster before = await _capture(tester, key);
+      await _pumpRing(tester, key, chart(0));
+      final _Raster immediate = await _capture(tester, key);
+      expect(_pixelMismatchCount(before, immediate), 0);
+      await tester.pump(const Duration(milliseconds: 240));
+      final _Raster mid = await _capture(tester, key);
+      // Half the original coverage remains when the fade is interrupted;
+      // halfway to new data coverage is 0.75, over the alpha140 empty track.
+      expect(
+        mid.atPolar(_side * 0.4, math.pi).alpha,
+        inInclusiveRange(225, 227),
+      );
+      await tester.pump(const Duration(milliseconds: 240));
+      final _Raster end = await _capture(tester, key);
+      final _Raster reference = await _render(tester, chart(0));
+      expect(_pixelMismatchCount(end, reference), 0);
+    }
+  });
+
+  testWidgets('zero opacity retains the surface at single and woven owners', (
+    WidgetTester tester,
+  ) async {
+    final List<String> violations = <String>[];
+    for (final Color surface in <Color>[
+      const Color(0xFF000000),
+      const Color(0x00000000),
+    ]) {
+      for (final WovenFill fill in _opacityFills) {
+        for (final bool clockwise in <bool>[true, false]) {
+          final WovenRingStyle style = WovenRingStyle(
+            startAngle: 0,
+            clockwise: clockwise,
+            surfaceColor: surface,
+          );
+          for (final int count in <int>[1, 4]) {
+            final _Raster raster = await _render(
+              tester,
+              WovenRingChart(
+                style: style,
+                segments: _opacitySegments(count, fill, 0),
+                animation: WovenRingAnimation.none,
+              ),
+            );
+            final WovenRingGeometry g = WovenRingGeometry.forSize(
+              const Size.square(_side),
+              style,
+            );
+            for (final Offset p in _opacityOwnerProbes(g, style, count)) {
+              final _Rgba actual = raster.atOffset(p);
+              if (actual != _rgbaOf(surface)) {
+                violations.add(
+                  'count=$count clockwise=$clockwise fill=$fill '
+                  'surface=$surface at=$p actual=$actual',
+                );
+              }
+            }
+            expect(raster.atPolar(g.innerRadius - 3, 0).alpha, 0);
+            expect(raster.atPolar(g.outerRadius + 3, math.pi / 4).alpha, 0);
+          }
+        }
+      }
+    }
+    expect(violations, isEmpty, reason: violations.take(12).join('\n'));
+  });
+
+  testWidgets('opacity fade to zero preserves its final surface continuously', (
+    WidgetTester tester,
+  ) async {
+    final List<String> violations = <String>[];
+    for (final Color surface in <Color>[
+      const Color(0xFF000000),
+      const Color(0x00000000),
+    ]) {
+      for (final WovenFill fill in _opacityFills) {
+        final WovenRingStyle style = WovenRingStyle(
+          startAngle: 0,
+          surfaceColor: surface,
+        );
+        for (final int count in <int>[1, 4]) {
+          await tester.pumpWidget(const SizedBox.shrink());
+          final GlobalKey key = GlobalKey();
+          WovenRingChart chart(double opacity) => WovenRingChart(
+            style: style,
+            segments: _opacitySegments(count, fill, opacity),
+            animation: WovenRingAnimation.none,
+            transitionDuration: const Duration(seconds: 1),
+          );
+          await _pumpRing(tester, key, chart(1));
+          await _pumpRing(tester, key, chart(0));
+          await tester.pump(const Duration(milliseconds: 990));
+          final _Raster near = await _capture(tester, key);
+          await tester.pump(const Duration(milliseconds: 10));
+          final _Raster end = await _capture(tester, key);
+          await tester.pump(const Duration(milliseconds: 100));
+          final _Raster settled = await _capture(tester, key);
+          final WovenRingGeometry g = WovenRingGeometry.forSize(
+            const Size.square(_side),
+            style,
+          );
+          for (final Offset p in _opacityOwnerProbes(g, style, count)) {
+            final _Rgba expected = _rgbaOf(surface);
+            final _Rgba before = near.atOffset(p);
+            final _Rgba after = end.atOffset(p);
+            final _Rgba stable = settled.atOffset(p);
+            if (before != expected || after != expected || stable != expected) {
+              violations.add(
+                'count=$count fill=$fill surface=$surface at=$p '
+                '990ms=$before 1000ms=$after 1100ms=$stable',
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(violations, isEmpty, reason: violations.take(12).join('\n'));
+  });
+
+  testWidgets('zero opacity retains its visible surface during entrance', (
+    WidgetTester tester,
+  ) async {
+    final List<String> violations = <String>[];
+    for (final Color surface in <Color>[
+      const Color(0xFF000000),
+      const Color(0x00000000),
+    ]) {
+      for (final WovenFill fill in _opacityFills) {
+        final WovenRingStyle style = WovenRingStyle(
+          startAngle: 0,
+          surfaceColor: surface,
+        );
+        for (final WovenRingAnimation animation in <WovenRingAnimation>[
+          WovenRingAnimation.grow,
+          WovenRingAnimation.sweep,
+        ]) {
+          for (final int count in <int>[1, 4]) {
+            await tester.pumpWidget(const SizedBox.shrink());
+            final GlobalKey key = GlobalKey();
+            await _pumpRing(
+              tester,
+              key,
+              WovenRingChart(
+                style: style,
+                segments: _opacitySegments(count, fill, 0),
+                animation: animation,
+                animationDuration: const Duration(seconds: 1),
+              ),
+            );
+            await tester.pump(const Duration(milliseconds: 400));
+            final _Raster raster = await _capture(tester, key);
+            final WovenRingGeometry g = WovenRingGeometry.forSize(
+              const Size.square(_side),
+              style,
+            );
+            // The first head is already visible in either entrance. Its cap
+            // centre is safely inside the drawn silhouette, even at zero alpha.
+            final Offset head = g.pointOn(g.trackRadius, -g.jointLag);
+            final _Rgba actual = raster.atOffset(head);
+            if (actual != _rgbaOf(surface)) {
+              violations.add(
+                'count=$count animation=$animation fill=$fill '
+                'surface=$surface actual=$actual',
+              );
+            }
+          }
+        }
+      }
+    }
+    expect(violations, isEmpty, reason: violations.take(12).join('\n'));
+  });
+
+  testWidgets('large finite start angles preserve their trigonometric phase', (
+    WidgetTester tester,
+  ) async {
+    final List<WovenSegment> segments = <WovenSegment>[
+      for (final Color color in WovenPalette.quartet)
+        WovenSegment(value: 1, fill: WovenFill.shaded(color)),
+    ];
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final double angle in <double>[
+        1e20,
+        -1e20,
+        double.maxFinite,
+        -double.maxFinite,
+      ]) {
+        final WovenRingStyle style = WovenRingStyle(
+          startAngle: angle,
+          clockwise: clockwise,
+          shadow: const WovenShadow(),
+          singleSegmentStyle: WovenSingleSegmentStyle.jointed,
+        );
+        for (final int count in <int>[1, 4]) {
+          final _Raster actual = await _render(
+            tester,
+            WovenRingChart(
+              segments: segments.take(count).toList(),
+              style: style,
+              animation: WovenRingAnimation.none,
+            ),
+          );
+          final _Raster wrapped = await _render(
+            tester,
+            WovenRingChart(
+              segments: segments.take(count).toList(),
+              style: style.copyWith(
+                startAngle: math.atan2(math.sin(angle), math.cos(angle)),
+              ),
+              animation: WovenRingAnimation.none,
+            ),
+          );
+          expect(
+            _pixelMismatchCount(actual, wrapped),
+            0,
+            reason: 'angle=$angle clockwise=$clockwise count=$count',
+          );
+        }
+        final _Raster loading = await _render(
+          tester,
+          WovenRingChart.loading(style: style),
+        );
+        final _Raster wrappedLoading = await _render(
+          tester,
+          WovenRingChart.loading(
+            style: style.copyWith(
+              startAngle: math.atan2(math.sin(angle), math.cos(angle)),
+            ),
+          ),
+        );
+        expect(
+          _pixelMismatchCount(loading, wrappedLoading),
+          0,
+          reason: 'loading angle=$angle clockwise=$clockwise',
+        );
+      }
+    }
+  });
+
+  testWidgets('a translucent single gradient blends once across its self lap', (
+    WidgetTester tester,
+  ) async {
+    for (final bool clockwise in <bool>[true, false]) {
+      for (final double opacity in <double>[1, 0.5]) {
+        final WovenRingStyle style = WovenRingStyle(
+          startAngle: 0,
+          clockwise: clockwise,
+          surfaceColor: const Color(0xFFFFFFFF),
+        );
+        final WovenRingGeometry geometry = WovenRingGeometry.forSize(
+          const Size.square(_side),
+          style,
+        );
+        final _Raster raster = await _render(
+          tester,
+          WovenRingChart(
+            segments: <WovenSegment>[
+              WovenSegment(
+                value: 1,
+                fill: const WovenFill.gradient(
+                  head: Color(0x80FF0000),
+                  tail: Color(0x800000FF),
+                ),
+                opacity: opacity,
+              ),
+            ],
+            style: style,
+            animation: WovenRingAnimation.none,
+          ),
+        );
+        // Neither endpoint contains green, so once-over-white compositing is
+        // independent of the sweep interpolation and its cap rotation. The
+        // entire interior, including antialiased self-lap edges, has the same
+        // effective alpha. Duplicate blending darkens this channel.
+        final int green = 255 - (128 * opacity).round();
+        for (var sample = 0; sample < 1440; sample++) {
+          final double angle = sample * math.pi * 2 / 1440;
+          final _Rgba pixel = raster.atPolar(geometry.trackRadius, angle);
+          expect(pixel.alpha, 255);
+          expect(
+            pixel.green,
+            green,
+            reason:
+                'single self lap must blend once: angle=$angle '
+                'clockwise=$clockwise opacity=$opacity pixel=$pixel',
+          );
+        }
+        final _Raster opaque = await _render(
+          tester,
+          WovenRingChart(
+            segments: const <WovenSegment>[
+              WovenSegment(
+                value: 1,
+                fill: WovenFill.gradient(
+                  head: Color(0xFFFF0000),
+                  tail: Color(0xFF0000FF),
+                ),
+              ),
+            ],
+            style: style,
+            animation: WovenRingAnimation.none,
+          ),
+        );
+        expect(
+          _alphaSupportMismatches(raster, opaque),
+          0,
+          reason: 'single translucency must preserve the annulus silhouette',
+        );
+      }
+    }
+  });
+
   testWidgets('the painted centerline has no gap at any joint or seam', (
     WidgetTester tester,
   ) async {
@@ -1977,6 +2462,45 @@ void main() {
               ),
             );
             scales.add(shadowScale);
+            final _Raster unfaded = await _paintReference(
+              tester,
+              WovenRingChartPainter(
+                segments: expectedFrame.segments,
+                fractions: expectedFrame.fractions,
+                style: style,
+                mode: WovenRingChartMode.data,
+                animation: WovenRingAnimation.none,
+                animationProgress: 1,
+                spin: 0,
+                highlightedIndex: null,
+                highlightBorder: const WovenBorder(),
+                topologyMerge: 0,
+                topologyAnchor: 0,
+              ),
+            );
+            // Compare every exterior pixel with the complete, same-geometry
+            // shadow render. Its shape moves and its heads can overlap, so a
+            // moving probe's maximum is not necessarily monotonic: in the CCW
+            // merge, unfaded alpha rises 73 to 78 between frames 11 and 12.
+            // The crossfade must still scale that result exactly once.
+            final int wovenAlpha = 255 - ((1 - shadowScale) * 255).round();
+            for (var y = 0; y < _side; y++) {
+              for (var x = 0; x < _side; x++) {
+                final double radius =
+                    (Offset(x + 0.5, y + 0.5) - geometry.center).distance;
+                if (radius <= geometry.outerRadius + 1.5) continue;
+                final int expectedAlpha =
+                    (unfaded.at(x, y).alpha * wovenAlpha / 255).round();
+                final int actualAlpha = rasters[frame].at(x, y).alpha;
+                expect(
+                  actualAlpha,
+                  closeTo(expectedAlpha, 1),
+                  reason:
+                      '${transitionCase.name} clockwise=$clockwise '
+                      'frame=$frame shadow ($x,$y)',
+                );
+              }
+            }
           }
 
           final int fullSignal = transitionCase.oneToMany
@@ -2013,20 +2537,6 @@ void main() {
                   '$context frame=$frame discontinuous outside shadow step '
                   '${signals[frame - 1]} -> ${signals[frame]} '
                   'limit=${stepLimit.toStringAsFixed(2)}',
-                );
-              }
-              if (transitionCase.oneToMany &&
-                  signals[frame] + 3 < signals[frame - 1]) {
-                violations.add(
-                  '$context frame=$frame shadow reversed while fading in: '
-                  '${signals[frame - 1]} -> ${signals[frame]}',
-                );
-              }
-              if (!transitionCase.oneToMany &&
-                  signals[frame] > signals[frame - 1] + 3) {
-                violations.add(
-                  '$context frame=$frame shadow reversed while fading out: '
-                  '${signals[frame - 1]} -> ${signals[frame]}',
                 );
               }
             }
@@ -2441,6 +2951,126 @@ void main() {
       }
     }
   });
+}
+
+const List<WovenFill> _opacityFills = <WovenFill>[
+  WovenFill.solid(Color(0xFFFF0000)),
+  WovenFill.gradient(head: Color(0xFFFF0000), tail: Color(0xFF0000FF)),
+];
+
+const WovenBorder _handoffHighlight = WovenBorder(
+  color: Color(0xFFFFD060),
+  widthFraction: 0.07,
+  opacity: 0.65,
+);
+
+WovenSegment _handoffSegment(int index, bool translucent) {
+  const List<WovenFill> fills = <WovenFill>[
+    WovenFill.gradient(head: Color(0xFFFF0000), tail: Color(0xFF0000FF)),
+    WovenFill.gradient(head: Color(0xFF00FF00), tail: Color(0xFF000000)),
+    WovenFill.gradient(head: Color(0xFFFFC000), tail: Color(0xFF8000FF)),
+  ];
+  final WovenFill fill = fills[index];
+  return WovenSegment(
+    value: 100,
+    fill: translucent
+        ? WovenFill.gradient(
+            head: fill.head.withValues(alpha: 0.5),
+            tail: fill.tail.withValues(alpha: 0.5),
+          )
+        : fill,
+    border: WovenBorder(
+      color: index == 0 ? const Color(0xFFFFFFFF) : const Color(0xFF8050F0),
+      widthFraction: index == 0 ? 0.05 : 0.03,
+      opacity: index == 0 ? 0.7 : 0.45,
+    ),
+    opacity: translucent ? (index == 0 ? 0.65 : 0.35) : 1,
+  );
+}
+
+WovenSegment _highlightedHandoffSegment(
+  WovenSegment segment,
+  int index,
+  int? highlighted,
+) => index == highlighted
+    ? segment.copyWith(border: _handoffHighlight)
+    : segment;
+
+WovenRingChart _handoffChart({
+  required int? active,
+  required WovenRingStyle style,
+  required bool translucent,
+  required int? highlighted,
+  int count = 2,
+}) => WovenRingChart(
+  style: style,
+  animation: WovenRingAnimation.none,
+  transitionDuration: const Duration(milliseconds: 480),
+  highlightedIndex: highlighted,
+  highlightBorder: _handoffHighlight,
+  segments: <WovenSegment>[
+    for (var i = 0; i < count; i++)
+      _handoffSegment(i, translucent).copyWith(value: i == active ? 100 : 0),
+  ],
+);
+
+WovenRingChart _handoffReference(WovenSegment segment, WovenRingStyle style) =>
+    WovenRingChart(
+      style: style,
+      animation: WovenRingAnimation.none,
+      segments: <WovenSegment>[
+        segment.copyWith(value: 100),
+        const WovenSegment(value: 0, fill: WovenFill.solid(Color(0xFF000000))),
+      ],
+    );
+
+List<WovenSegment> _opacitySegments(
+  int count,
+  WovenFill fill,
+  double opacity,
+) => <WovenSegment>[
+  for (var i = 0; i < count; i++)
+    WovenSegment(
+      value: 1,
+      fill: i.isEven ? fill : const WovenFill.solid(Color(0xFF00FF00)),
+      opacity: i.isEven ? opacity : 1,
+    ),
+];
+
+List<Offset> _opacityOwnerProbes(
+  WovenRingGeometry g,
+  WovenRingStyle style,
+  int count,
+) {
+  if (count == 1) {
+    return <Offset>[
+      for (var i = 0; i < 72; i++)
+        g.pointOn(g.trackRadius, i * 2 * math.pi / 72),
+    ];
+  }
+  final List<WovenSegmentExtent> extents = g.extents(
+    List<double>.filled(count, 1 / count),
+    style.resolvedStartAngle,
+    clockwise: style.clockwise,
+  );
+  final List<Path> paths = <Path>[
+    for (final WovenSegmentExtent e in extents)
+      g.segmentPath(e.start, e.end, clockwise: style.clockwise),
+  ];
+  return <Offset>[
+    for (final int owner in <int>[0, 2])
+      () {
+        final _InteriorPixel? probe = _findInteriorPixel(
+          paths: paths,
+          geometry: g,
+          targetAngle: extents[owner].start + (style.clockwise ? 1 : -1) * 0.10,
+        );
+        expect(probe, isNotNull);
+        expect(probe!.owner, owner);
+        expect(probe.covered, contains((owner - 1 + count) % count));
+        return Offset(probe.x.toDouble(), probe.y.toDouble());
+      }(),
+  ];
 }
 
 Future<_Raster> _render(WidgetTester tester, WovenRingChart ring) async {
@@ -3260,6 +3890,27 @@ Future<void> _pumpRing(
     ),
   );
 }
+
+Future<_Raster> _paintReference(
+  WidgetTester tester,
+  WovenRingChartPainter painter,
+) async => (await tester.runAsync<_Raster>(() async {
+  final ui.PictureRecorder recorder = ui.PictureRecorder();
+  painter.paint(Canvas(recorder), const Size.square(_side));
+  final ui.Picture picture = recorder.endRecording();
+  final ui.Image image = await picture.toImage(_side.toInt(), _side.toInt());
+  final ByteData data = (await image.toByteData(
+    format: ui.ImageByteFormat.rawRgba,
+  ))!;
+  final _Raster result = _Raster(
+    image.width,
+    image.height,
+    Uint8List.fromList(data.buffer.asUint8List()),
+  );
+  image.dispose();
+  picture.dispose();
+  return result;
+}))!;
 
 Future<_Raster> _capture(WidgetTester tester, GlobalKey boundaryKey) async {
   final RenderRepaintBoundary boundary =

@@ -13,7 +13,7 @@
 // under its Example tab, and a page of showcase scaffolding is the wrong first
 // thing to show someone: that slot belongs to the shortest runnable example
 // there is, which is what `main.dart` holds.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
@@ -44,7 +44,6 @@ class WovenRingChartDemoApp extends StatelessWidget {
           surface: ShowcaseColors.page,
         ),
         scaffoldBackgroundColor: ShowcaseColors.page,
-        useMaterial3: true,
       ),
       home: const ShowcasePage(),
     );

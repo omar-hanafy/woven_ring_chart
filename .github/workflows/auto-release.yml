@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: auto-release-${{ github.repository }}-woven_ring_chart-${{ github.ref }}
@@ -16,10 +17,13 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 65
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # zizmor: ignore[artipacked] -- PAT credentials are required by git push below; this job uploads no artifacts.
+          persist-credentials: true
           fetch-depth: 0
           # Falls back so the job can run and report; the guard below stops
           # it before it can tag with an identity that cannot publish.
@@ -31,52 +35,11 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
         shell: bash
         run: |
-          set -euo pipefail
-
-          pubspec='pubspec.yaml'
-          before="$BEFORE_SHA"
-
-          if [[ "$before" =~ ^0+$ ]]; then
-            echo 'Branch creation detected; no release tag will be created.'
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          new_version=$(awk '/^version:/ {print $2; exit}' "$pubspec" | tr -d "\"'")
-          if [[ -z "$new_version" ]]; then
-            echo "Unable to read version from $pubspec."
-            exit 1
-          fi
-
-          if git cat-file -e "$before:$pubspec" 2>/dev/null; then
-            old_version=$(git show "$before:$pubspec" | awk '/^version:/ {print $2; exit}' | tr -d "\"'")
-          else
-            old_version=''
-          fi
-
-          if [[ "$old_version" == "$new_version" ]]; then
-            echo "Version remains $new_version; no release tag will be created."
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$'
-          prerelease_pattern='^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+(\+[0-9A-Za-z.-]+)?$'
-
-          if [[ "${GITHUB_REF_NAME}" == 'main' && ! "$new_version" =~ $stable_pattern ]]; then
-            echo "main requires a stable semantic version, got $new_version."
-            exit 1
-          fi
-          if [[ "${GITHUB_REF_NAME}" == 'dev' && ! "$new_version" =~ $prerelease_pattern ]]; then
-            echo "dev requires a prerelease semantic version, got $new_version."
-            exit 1
-          fi
-
-          {
-            echo 'changed=true'
-            echo "value=$new_version"
-            echo "tag=woven_ring_chart-v$new_version"
-          } >> "$GITHUB_OUTPUT"
+          python3 tool/release_guard.py \
+            --lane "$GITHUB_REF_NAME" \
+            --before "$BEFORE_SHA" \
+            --github-output "$GITHUB_OUTPUT" \
+            --notes-path "$RUNNER_TEMP/woven_ring_chart-release-notes.md"
 
       - name: Require a tag-push identity
         if: steps.version.outputs.changed == 'true'
@@ -96,6 +59,16 @@ jobs:
             echo 'read and write, stored as the TAG_PUSH_PAT secret.'
             exit 1
           fi
+
+      - name: Wait for checks on this exact merged commit
+        if: steps.version.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tool/wait_release_checks.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --branch "$GITHUB_REF_NAME" \
+            --sha "$GITHUB_SHA"
 
       - name: Verify tag is new
         if: steps.version.outputs.changed == 'true'
@@ -134,7 +107,9 @@ jobs:
         run: |
           set -euo pipefail
           tag="$RELEASE_TAG"
-          args=("$tag" --verify-tag --generate-notes --target "$GITHUB_SHA")
+          args=("$tag" --verify-tag --title "$tag" \
+            --notes-file "$RUNNER_TEMP/woven_ring_chart-release-notes.md" \
+            --target "$GITHUB_SHA")
           if [[ "${GITHUB_REF_NAME}" == 'dev' ]]; then
             args+=(--prerelease)
           fi

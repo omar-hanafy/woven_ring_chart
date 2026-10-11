@@ -10,6 +10,40 @@ import 'package:woven_ring_chart/woven_ring_chart.dart';
 import '../support/numeric_matchers.dart';
 
 void main() {
+  test(
+    'hole mask excludes the entire inner disk and admits exterior shadow',
+    () {
+      for (final thickness in <double>[.12, .2, .3]) {
+        final geometry = WovenRingGeometry.forSize(
+          const Size(480, 600),
+          WovenRingStyle(
+            thicknessFraction: thickness,
+            shadow: const WovenShadow(),
+          ),
+        );
+        final mask = geometry.holeMask();
+        expect(mask.contains(geometry.center), isFalse);
+        for (var i = 0; i < 360; i++) {
+          final angle = i * math.pi / 180;
+          for (final radius in <double>[
+            0,
+            geometry.innerRadius / 2,
+            geometry.innerRadius - .01,
+          ]) {
+            expect(mask.contains(geometry.pointOn(radius, angle)), isFalse);
+          }
+          for (final radius in <double>[
+            geometry.innerRadius + .01,
+            geometry.trackRadius,
+            geometry.outerRadius + geometry.thickness,
+          ]) {
+            expect(mask.contains(geometry.pointOn(radius, angle)), isTrue);
+          }
+        }
+      }
+    },
+  );
+
   group('WovenRingGeometry proportions', () {
     test('derives every default dimension from the shortest side', () {
       final geometry = WovenRingGeometry.forSize(

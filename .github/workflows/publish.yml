@@ -10,6 +10,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # zizmor: ignore[unpinned-uses] -- Canonical Dart Trusted Publisher workflow follows its supported v1 contract.
     uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
     with:
       working-directory: "."

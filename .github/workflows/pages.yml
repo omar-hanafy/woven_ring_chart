@@ -9,14 +9,16 @@ on:
       - main
     paths:
       - 'lib/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
       - 'example/**'
+      - 'tool/wait_pub_version.py'
+      - 'tool/release_guard.py'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Never cancel a deployment that is already going out; queue behind it.
 concurrency:
@@ -31,9 +33,18 @@ jobs:
   build:
     name: Build the showcase
     runs-on: ubuntu-latest
+    # Auto release can wait up to an hour for CI before it pushes the publish
+    # tag. Leave time for that, publication, and the showcase build.
+    timeout-minutes: 135
+    permissions:
+      contents: read
+      pages: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
 
@@ -47,9 +58,10 @@ jobs:
 
       - name: Configure Pages
         id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Build web
+        id: web
         env:
           BASE_PATH: ${{ steps.pages.outputs.base_path }}
         shell: bash
@@ -64,11 +76,8 @@ jobs:
 
           # The install line on the page is only trustworthy if it comes from
           # the package being demonstrated, so it is read rather than written.
-          version=$(awk '/^version:/ {print $2; exit}' ../pubspec.yaml | tr -d "\"'")
-          if [[ -z "$version" ]]; then
-            echo 'Unable to read version from pubspec.yaml.'
-            exit 1
-          fi
+          version=$(python3 -c 'import pathlib, sys; sys.path.insert(0, "../tool"); from release_guard import validate_package; print(validate_package(pathlib.Path("../pubspec.yaml").read_text()))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
           # -t lib/showcase.dart, not the default lib/main.dart: main.dart is
           # the short getting-started example that pub.dev renders under its
@@ -80,8 +89,15 @@ jobs:
             --base-href "$base_href" \
             --dart-define=wovenVersion="$version"
 
+      # main starts CI, auto release, and this build in parallel. Never deploy
+      # an install instruction until that exact version is available on pub.dev.
+      - name: Wait for the demonstrated package version on pub.dev
+        env:
+          PACKAGE_VERSION: ${{ steps.web.outputs.version }}
+        run: python3 ../tool/wait_pub_version.py --version "$PACKAGE_VERSION"
+
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: example/build/web
 
@@ -89,10 +105,13 @@ jobs:
     name: Deploy to Pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

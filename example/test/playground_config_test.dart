@@ -146,9 +146,8 @@ void _expectStyleMatches(PlaygroundConfig config) {
       expect(source, isNot(contains('$name:')), reason: '$name is default');
       return;
     }
-    final RegExpMatch? match = RegExp(
-      '$name: ($_numberPattern),',
-    ).firstMatch(source);
+    final RegExpMatch? match = RegExp('$name: ($_numberPattern),')
+        .firstMatch(source);
     expect(match, isNotNull, reason: '$name should be emitted');
     expect(double.parse(match![1]!), closeTo(actual, 1e-9), reason: name);
   }

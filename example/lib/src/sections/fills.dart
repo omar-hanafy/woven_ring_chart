@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
@@ -60,7 +60,7 @@ class FillsSection extends StatelessWidget {
             source:
                 'WovenFill.gradient(\n'
                 '  head: colors[i],\n'
-                '  tail: colors[i + 1],\n'
+                '  tail: colors[(i + 1) % colors.length],\n'
                 ')',
             chart: _ring(
               fill: (int i) => WovenFill.gradient(

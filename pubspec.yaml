@@ -2,7 +2,7 @@ name: woven_ring_chart
 description: >
   A woven doughnut chart for Flutter. Segments lap over one another like
   shingles, so every boundary between two colours is a true semicircle.
-version: 1.0.2
+version: 2.0.0
 
 homepage: https://github.com/omar-hanafy/woven_ring_chart
 repository: https://github.com/omar-hanafy/woven_ring_chart
@@ -26,13 +26,13 @@ platforms:
 
 screenshots:
   - description: >
-      A ten segment woven ring, gradient filled and bordered, beside the
-      solid, single value, and empty renderings.
+      Four woven rings showing solid colours, bordered gradients, ten
+      segments, and shadows.
     path: screenshots/woven_ring_chart.png
 
 environment:
-  sdk: ^3.12.2
-  flutter: ">=3.44.0"
+  sdk: ^3.13.5
+  flutter: ">=3.47.7"
 
 dependencies:
   flutter:

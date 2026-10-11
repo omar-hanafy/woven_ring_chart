@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- HTTPS links may fall back to the launcher plugin's in-app WebView. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="woven_ring_chart_example"
         android:name="${applicationName}"

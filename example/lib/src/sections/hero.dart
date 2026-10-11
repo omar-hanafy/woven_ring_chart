@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -51,20 +51,20 @@ class HeroSection extends StatelessWidget {
                   const SizedBox(height: 24),
                   const _InstallChip(),
                   const SizedBox(height: 18),
-                  Row(
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: <Widget>[
                       _LinkButton(
                         label: 'pub.dev',
                         icon: Icons.inventory_2_outlined,
                         url: kPubDevUrl,
                       ),
-                      const SizedBox(width: 8),
                       _LinkButton(
                         label: 'GitHub',
                         icon: Icons.code_rounded,
                         url: kRepoUrl,
                       ),
-                      const SizedBox(width: 8),
                       _LinkButton(
                         label: 'API docs',
                         icon: Icons.menu_book_outlined,

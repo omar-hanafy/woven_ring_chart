@@ -10,7 +10,7 @@
 //
 //   flutter run -t lib/showcase.dart
 //   https://omar-hanafy.github.io/woven_ring_chart/
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 

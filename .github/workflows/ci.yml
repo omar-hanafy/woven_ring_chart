@@ -1,94 +1,137 @@
 name: CI
 
-# The lane rules are: main carries stable versions, dev carries prereleases.
-# Both lanes are checked on push, and a pull request is checked against the lane
-# it targets, so a promotion into main is held to the stable rule before it
-# lands rather than after.
 on:
   push:
-    branches:
-      - main
-      - dev
+    branches: [main, dev]
   pull_request:
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    working-directory: "."
 
 jobs:
   test-stable:
     name: Test on stable
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-
-      - name: Validate release lane
+      - name: Set up Java for the Android example
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate release lane and changelog
         env:
           TARGET_LANE: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
-        shell: bash
+        run: python3 tool/release_guard.py --lane "$TARGET_LANE"
+      - name: Validate package and example
+        run: bash tool/validate_all.sh
+      - name: Build the web showcase
+        working-directory: example
+        run: flutter build web --release --target lib/showcase.dart
+      - name: Build the Android showcase
+        working-directory: example
+        run: flutter build apk --release --target lib/showcase.dart
+
+  test-compatibility:
+    name: Test ${{ matrix.configuration }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - configuration: minimum Flutter
+            flutter-version: '3.47.7'
+            dependencies: get
+          - configuration: lower dependencies
+            flutter-version: ''
+            dependencies: downgrade
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ matrix.flutter-version }}
+      - name: Resolve dependency bounds
+        env:
+          DEPENDENCY_COMMAND: ${{ matrix.dependencies }}
         run: |
-          set -euo pipefail
-          version=$(awk '/^version:/ {print $2; exit}' pubspec.yaml | tr -d "\"'")
-          stable_pattern='^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$'
-          prerelease_pattern='^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+(\+[0-9A-Za-z.-]+)?$'
-          if [[ "$TARGET_LANE" == 'main' && ! "$version" =~ $stable_pattern ]]; then
-            echo "main requires a stable semantic version, got $version."
-            exit 1
-          fi
-          if [[ "$TARGET_LANE" == 'dev' && ! "$version" =~ $prerelease_pattern ]]; then
-            echo "dev requires a prerelease semantic version, got $version."
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: flutter pub get
-      - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed .
-      - name: Analyze
-        run: flutter analyze
-      - name: Test
-        run: flutter test
-
-      # The example is the showcase, and main deploys it. Its own widget tests
-      # belong on the pull request rather than only on the deploy.
-      - name: Test the example
+          flutter pub "$DEPENDENCY_COMMAND"
+          cd example
+          flutter pub "$DEPENDENCY_COMMAND"
+      - run: flutter analyze
+      - run: flutter test --reporter expanded
+      - name: Verify example
         working-directory: example
         run: |
-          flutter pub get
-          flutter test
+          flutter analyze
+          flutter test --reporter expanded
 
   test-beta:
     name: Test on beta
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: beta
       - run: flutter pub get
+      - name: Resolve example dependencies
+        working-directory: example
+        run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+
+  example-macos:
+    name: Example on macOS and iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+      - name: Generate the current macOS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          scaffold=$(mktemp -d)
+          trap 'rm -rf "$scaffold"' EXIT
+          flutter create --no-pub --platforms=macos \
+            --project-name woven_ring_chart_example --org com.omarhanafy "$scaffold"
+          cp -R "$scaffold/macos" example/macos
+      - name: Test the native showcase
+        working-directory: example
+        run: |
+          flutter pub get
+          flutter test integration_test/showcase_flow_test.dart -d macos
+      - name: Build the iOS showcase
+        working-directory: example
+        run: flutter build ios --release --no-codesign --target lib/showcase.dart
 
   pana:
     name: Pana
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
       - run: flutter pub get
-      # pana shells out to cwebp, dwebp and webpinfo to check the pubspec
-      # screenshots. They are not on the runner image, and without them the
-      # screenshot check scores zero for a package that is actually fine.
+      # Pana validates the declared screenshot using these executables.
       - name: Install webp tools
         run: sudo apt-get update && sudo apt-get install -y webp
-      - run: dart pub global activate pana 0.23.14
+      - run: dart pub global activate pana 0.23.19
       - run: pana --exit-code-threshold 0 .

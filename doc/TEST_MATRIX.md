@@ -22,8 +22,9 @@ predicate it applies everywhere:
 The suites under `test/geometry/`, `test/model/`, `test/painting/`, and
 `test/widgets/` cover the value types, the painter's internals, and the widget's
 lifecycle. They share fixtures through `test/support/`. They are not the gate: a
-regression must be caught by the catalog. `example/test/demo_app_test.dart`
-covers the example app's own wiring and runs from the example directory.
+regression must be caught by the catalog. The suites in `example/test/` cover
+the getting-started app, showcase, and generated playground code, and run from
+the example directory.
 
 Any check that is deliberately narrowed says so at the call site and names what
 covers it instead. `_TopologyTransitionCase.checkCyclicOwnership` is `required`
@@ -70,6 +71,10 @@ Then, measured rather than assumed:
 
 - Every visible colour boundary sits on a circle of radius `thickness / 2` centred on
   the successor head's cap centre, sampled at eighteen radii across the ring.
+- Dense rings at maximum thickness and overlap preserve cyclic successor
+  ownership across the seam, including borders and partially visible heads.
+- Identical translucent segments stay uniform across every internal boundary
+  on transparent, partially transparent, and opaque surfaces.
 - Nothing paints outside the silhouette, measured below the pixel. The ring
   probe two pixels clear of each edge cannot see a stroke that spills less than
   a whole pixel, and a stroke centred on the boundary spills exactly half its
@@ -83,7 +88,8 @@ Then, measured rather than assumed:
   when a joint hairline sits on the correct edge and could mask it.
 - Along-segment gradients run head to tail the right way round for both gradient
   directions and both senses of rotation; across-thickness gradients have no angular
-  variation at all and do shade across it.
+  variation at all and do shade across it. Long segments keep their head colour
+  across the cap even when overlap and rounded ends extend past one turn.
 
 ## 3. States (catalog section D)
 
@@ -95,12 +101,15 @@ Then, measured rather than assumed:
   pinned by its own check that walks seven radii across the whole ring, so a
   seam mark cannot come back by way of a changed default.
 - All-zero data falls back to the empty track without painting any segment.
+- Dropped values do not change a populated ring's entrance or settled rendering.
 
 ## 4. Motion (catalog sections E, F)
 
 - Sweep and grow, CW and CCW, settle bit-for-bit onto the static rendering, so
   a seam that changes owner on the final frame fails.
+- Single-segment gradients keep their phase through the last entrance frame.
 - Neither ever paints outside the outer circle or into the hole, at any frame.
+- Shadow masks exclude the hole on both native and web renderers.
 - Every free end of a growing ring is a true cap circle, both ends of every
   covered run, sampled through completion in both directions and both animations.
 - A self-lapping segment buries no border: every border pixel has background
@@ -116,6 +125,18 @@ Then, measured rather than assumed:
   round the centreline so it needs no knowledge of the interpolated fractions.
 - Retargeting mid-flight begins from the exact frame already on screen and never
   opens a gap.
+- Surface-derived borders respond immediately to surface changes, including
+  interrupted data transitions and highlights.
+- Changing a retained highlight replaces only its logical border contribution;
+  changing selection before or after a retarget preserves the same frame.
+- Translucent one-to-many and many-to-one transitions preserve the requested
+  alpha on transparent and partially transparent surfaces.
+- Segment opacity fades the combined fill and border once, including highlighted
+  borders, differing fill and surface colours, partially transparent colours,
+  and mixed colour spaces.
+- Moving the sole positive value or collapsing into a previously empty position
+  carries the destination gradient and highlight continuously. Repeated retargets
+  keep bounded visual state.
 
 ## 5. Widget contract (catalog section G)
 
@@ -125,6 +146,8 @@ Then, measured rather than assumed:
 - Aggregate and per-segment semantics are both reachable, and adding a per-segment
   label does not take the centre away from assistive technology.
 - Mutating a reused list instance is still picked up.
+- Highlight indices are bounded by the current input list even while an
+  interrupted transition retains outgoing segments.
 
 ## 6. Manual runtime gate
 
@@ -140,5 +163,6 @@ The sweep covers the whole demo control matrix: every data case by fill by
 border by direction, the geometry sliders at their endpoints, the gradient axis
 and direction cross-product at one, two, four, and ten segments, the short-segment
 cases in both rotations, every state, and six frames through each animation. Montage
-them and look; then in the running app walk all three tabs and confirm the
-console holds no exception or failed assertion.
+them and look; then in the running showcase walk the playground, animation,
+states, and accessibility sections and confirm the console holds no exception
+or failed assertion.

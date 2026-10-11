@@ -67,18 +67,26 @@ List<double> wovenSegmentFractions(
     return <double>[for (final double value in f) value / visibleTotal];
   }
 
-  final int positives = f.where((double v) => v > 0).length;
+  // A finite positive input can underflow to a zero fraction when it is
+  // normalized beside a much larger value. Enforcement still owes that input
+  // its minimum, so eligibility comes from the data rather than the quotient.
+  final List<bool> positive = <bool>[
+    for (final double value in values) value.isFinite && value > 0.0,
+  ];
+  final int positives = positive.where((bool value) => value).length;
   if (positives == 0) return f;
   if (positives * minimumFraction >= 1) {
     // No room for everyone. Share the ring out evenly and be honest about it.
-    return <double>[for (final double v in f) v > 0 ? 1 / positives : 0.0];
+    return <double>[
+      for (final bool value in positive) value ? 1 / positives : 0.0,
+    ];
   }
 
   final List<bool> locked = List<bool>.filled(n, false);
   for (var pass = 0; pass < positives; pass++) {
     var changed = false;
     for (var i = 0; i < n; i++) {
-      if (f[i] > 0 && !locked[i] && f[i] < minimumFraction - 1e-9) {
+      if (positive[i] && !locked[i] && f[i] < minimumFraction - 1e-9) {
         locked[i] = true;
         f[i] = minimumFraction;
         changed = true;
@@ -87,7 +95,7 @@ List<double> wovenSegmentFractions(
     if (!changed) break;
     double lockedSum = 0, freeSum = 0;
     for (var i = 0; i < n; i++) {
-      if (f[i] <= 0) continue;
+      if (!positive[i]) continue;
       if (locked[i]) {
         lockedSum += f[i];
       } else {
@@ -98,7 +106,7 @@ List<double> wovenSegmentFractions(
     if (freeSum <= 0 || room <= 0) break;
     final double scale = room / freeSum;
     for (var i = 0; i < n; i++) {
-      if (f[i] > 0 && !locked[i]) f[i] *= scale;
+      if (positive[i] && !locked[i]) f[i] *= scale;
     }
   }
   return f;

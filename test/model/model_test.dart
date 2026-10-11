@@ -125,9 +125,8 @@ void main() {
         0.30,
       );
       expect(
-        const WovenRingStyle(
-          thicknessFraction: double.nan,
-        ).resolvedThicknessFraction,
+        const WovenRingStyle(thicknessFraction: double.nan)
+            .resolvedThicknessFraction,
         0.20,
       );
       expect(
@@ -139,9 +138,8 @@ void main() {
         1.0,
       );
       expect(
-        const WovenRingStyle(
-          overlapFraction: double.infinity,
-        ).resolvedOverlapFraction,
+        const WovenRingStyle(overlapFraction: double.infinity)
+            .resolvedOverlapFraction,
         0.50,
       );
       expect(
@@ -149,6 +147,9 @@ void main() {
         -math.pi / 2,
       );
       expect(const WovenRingStyle(startAngle: 9).resolvedStartAngle, 9);
+      const wound = WovenRingStyle(startAngle: double.maxFinite);
+      expect(wound.resolvedStartAngle, double.maxFinite);
+      expect(wound.copyWith().startAngle, double.maxFinite);
     });
 
     test('border and shadow fractions are safely bounded', () {

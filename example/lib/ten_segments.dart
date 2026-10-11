@@ -7,7 +7,7 @@
 // data transition - is on screen without touching a control.
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 void main() => runApp(const TenSegmentsApp());
@@ -37,7 +37,6 @@ class TenSegmentsApp extends StatelessWidget {
         surface: _surface,
       ),
       scaffoldBackgroundColor: _surface,
-      useMaterial3: true,
     ),
     home: const TenSegmentsScreen(),
   );
