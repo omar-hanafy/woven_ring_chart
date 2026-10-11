@@ -1,6 +1,7 @@
 // Requirements: the runnable snippet, the showcase's matching code/preview,
 // replay and changing data, and the documented accessibility behavior.
 // This suite runs in the real app with integration_test on desktop and web.
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -22,6 +23,8 @@ import 'package:woven_ring_chart_example/ten_segments.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  _captureClock = _CaptureClock(binding);
+  tearDownAll(_captureClock.dispose);
 
   _flow('the published snippet runs and exposes its chart label', (
     tester,
@@ -712,6 +715,7 @@ void main() {
           <WovenSegment>[translucent, translucent, translucent],
           <WovenSegment>[translucent],
         ]) {
+          final previousCount = segments.length;
           final before = await _boundaryPixels(tester, capture);
           _expectPixelNear(before, interior, surfaceCase.rgba, 1);
           final frames = await _timedFrames(
@@ -719,17 +723,29 @@ void main() {
             capture,
             duration,
             () => update(() => segments = next),
+            diagnose: true,
           );
           // The centreline pixel is 23px inside either annulus edge. Identical
           // half-alpha fills keep the same premultiplied result in both shapes.
-          for (final pixels in [
-            frames.immediate,
-            frames.first,
-            frames.middle,
-            frames.last,
-            frames.end,
+          for (final (phase, pixels) in [
+            ('immediate', frames.immediate),
+            ('first', frames.first),
+            ('middle', frames.middle),
+            ('last', frames.last),
+            ('end', frames.end),
           ]) {
-            _expectPixelNear(pixels, interior, surfaceCase.rgba, 1);
+            _expectPixelNear(
+              pixels,
+              interior,
+              surfaceCase.rgba,
+              1,
+              reason:
+                  'surface=${surfaceCase.color} backdrop=${surfaceCase.backdrop} '
+                  'owners=$previousCount->${next.length} phase=$phase '
+                  'xy=(24,120) rgba=${pixels.sublist(interior, interior + 4)} '
+                  'first=${frames.firstFraction} middle=${frames.middleFraction} '
+                  'last=${frames.lastFraction} capture=${frames.diagnostics[phase]}',
+            );
           }
         }
       }
@@ -2334,7 +2350,9 @@ Future<Uint8List> _imagePixels(ui.Image image) async {
   return data!.buffer.asUint8List();
 }
 
-// Collect real display-frame snapshots before asynchronous GPU byte readback.
+// Request real engine frames at controlled animation timestamps. Complete each
+// asynchronous GPU capture before advancing the next phase, so readback latency
+// cannot change the state being compared or overlap retained capture handles.
 Future<
   ({
     Uint8List immediate,
@@ -2355,25 +2373,21 @@ _timedFrames(
   VoidCallback trigger, {
   bool diagnose = false,
 }) async {
-  final images = <ui.Image>[];
+  final binding = tester.binding as IntegrationTestWidgetsFlutterBinding;
+  final framePolicy = binding.framePolicy;
   final diagnostics = <String, Map<String, Object?>>{};
-  // Resolve the live boundary before waiting: test finders are guarded and
-  // cannot be queried from a frame callback during pumpAndSettle.
   final boundary = tester.renderObject<RenderRepaintBoundary>(capture);
   final paint = diagnose
       ? tester.renderObject<RenderCustomPaint>(
           find.descendant(of: capture, matching: find.byType(CustomPaint)),
         )
       : null;
-  ui.Image snapshot(String phase) {
-    final image = boundary.toImageSync(pixelRatio: 1);
-    images.add(image);
+  Future<Uint8List> snapshot(String phase) async {
     if (diagnose) {
       final frame = paint!.painter! as WovenRingChartPainter;
       final shadow = frame.style.shadow;
       diagnostics[phase] = {
         'boundarySize': boundary.size.toString(),
-        'imageSize': [image.width, image.height],
         'paintSize': paint.size.toString(),
         'progress': frame.animationProgress,
         'fractions': frame.fractions,
@@ -2390,107 +2404,133 @@ _timedFrames(
         'topologyAnchor': frame.topologyAnchor,
       };
     }
-    return image;
-  }
-
-  Future<Uint8List> pixels(ui.Image image, String phase) async {
-    final data = (await image.toByteData())!;
-    if (diagnose) {
-      diagnostics[phase]!.addAll({
-        'byteLength': data.lengthInBytes,
-        'byteOffset': data.offsetInBytes,
-        'bufferLength': data.buffer.lengthInBytes,
-      });
+    final image = await boundary.toImage(pixelRatio: 1);
+    try {
+      final data = (await image.toByteData())!;
+      if (diagnose) {
+        diagnostics[phase]!.addAll({
+          'imageSize': [image.width, image.height],
+          'byteLength': data.lengthInBytes,
+          'byteOffset': data.offsetInBytes,
+          'bufferLength': data.buffer.lengthInBytes,
+        });
+      }
+      return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+    } finally {
+      image.dispose();
     }
-    return data.buffer.asUint8List();
   }
 
+  binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.onlyPumps;
+  var clockActive = false;
   try {
+    _captureClock.beginCaptureClock();
+    clockActive = true;
     trigger();
     final startedAt = await _pumpTimestamp(tester);
-    final immediate = snapshot('immediate');
-    final firstAt = await _pumpTimestamp(
-      tester,
-      const Duration(milliseconds: 1),
-    );
+    final immediate = await snapshot('immediate');
+    _captureClock.advanceCaptureClock(const Duration(milliseconds: 1));
+    final firstAt = await _pumpTimestamp(tester);
+    expect(firstAt - startedAt, const Duration(milliseconds: 1));
     final firstFraction =
         (firstAt - startedAt).inMicroseconds / duration.inMicroseconds;
     expect(firstFraction, greaterThan(0));
     expect(firstFraction, lessThan(.1));
-    final first = snapshot('first');
-    final remainingToMiddle =
-        (duration.inMicroseconds * .4).round() -
-        (firstAt - startedAt).inMicroseconds;
-    final middleAt = await _pumpTimestamp(
-      tester,
-      Duration(microseconds: math.max(0, remainingToMiddle)),
+    final first = await snapshot('first');
+    final middleOffset = Duration(
+      microseconds: (duration.inMicroseconds * .4).round(),
     );
-    final middle = snapshot('middle');
-    // Timer-driven pumps can jump across the final display interval. Observe
-    // every live frame instead, retaining a synchronous snapshot only when
-    // its real timestamp is within the required pre-completion window.
-    Duration? lastAt;
-    ui.Image? last;
-    var observing = true;
-    final binding = tester.binding as LiveTestWidgetsFlutterBinding;
-    void observeLastFrame(Duration timestamp) {
-      if (!observing) return;
-      final fraction =
-          (timestamp - startedAt).inMicroseconds / duration.inMicroseconds;
-      if (last == null && fraction >= .97 && fraction < 1) {
-        lastAt = timestamp;
-        last = snapshot('last');
-      }
-      if (fraction < 1) {
-        binding.addPostFrameCallback(observeLastFrame);
-      }
-    }
-
-    final framePolicy = binding.framePolicy;
-    final previousDilation = timeDilation;
-    try {
-      // Slow only the final interval, so its unchanged 3% animation window
-      // spans 480ms of display time for a one-second animation. The scheduler
-      // preserves elapsed time when changing dilation; tickers and this
-      // observer still consume the same genuine, adjusted frame timestamps.
-      timeDilation = 16;
-      binding.addPostFrameCallback(observeLastFrame);
-      binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
-      await tester.pumpAndSettle();
-    } finally {
-      observing = false;
-      timeDilation = previousDilation;
-      binding.framePolicy = framePolicy;
-    }
-    expect(
-      lastAt,
-      isNotNull,
-      reason: 'a genuine display frame within .97 <= fraction < 1 is required',
+    _captureClock.advanceCaptureClock(middleOffset - (firstAt - startedAt));
+    final middleAt = await _pumpTimestamp(tester);
+    expect(middleAt - startedAt, middleOffset);
+    final middle = await snapshot('middle');
+    final lastOffset = Duration(
+      microseconds: (duration.inMicroseconds * .98).round(),
     );
+    _captureClock.advanceCaptureClock(lastOffset - (middleAt - startedAt));
+    final lastAt = await _pumpTimestamp(tester);
+    expect(lastAt - startedAt, lastOffset);
     final lastFraction =
-        (lastAt! - startedAt).inMicroseconds / duration.inMicroseconds;
+        (lastAt - startedAt).inMicroseconds / duration.inMicroseconds;
     expect(lastFraction, greaterThanOrEqualTo(.97));
     expect(lastFraction, lessThan(1));
-    final end = snapshot('end');
-    final result = (
-      immediate: await pixels(immediate, 'immediate'),
-      first: await pixels(first, 'first'),
-      middle: await pixels(middle, 'middle'),
-      last: await pixels(last!, 'last'),
-      end: await pixels(end, 'end'),
+    final last = await snapshot('last');
+    _captureClock.advanceCaptureClock(duration - (lastAt - startedAt));
+    final endAt = await _pumpTimestamp(tester);
+    expect(endAt - startedAt, duration);
+    final end = await snapshot('end');
+    _captureClock.advanceCaptureClock(const Duration(milliseconds: 100));
+    await _pumpTimestamp(tester);
+    expect(await snapshot('stable'), orderedEquals(end));
+    return (
+      immediate: immediate,
+      first: first,
+      middle: middle,
+      last: last,
+      end: end,
       firstFraction: firstFraction,
-      diagnostics: diagnostics,
       middleFraction:
           (middleAt - startedAt).inMicroseconds / duration.inMicroseconds,
       lastFraction: lastFraction,
+      diagnostics: diagnostics,
     );
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(await _boundaryPixels(tester, capture), orderedEquals(result.end));
-    return result;
   } finally {
-    for (final image in images) {
-      image.dispose();
-    }
+    if (clockActive) _captureClock.endCaptureClock();
+    binding.framePolicy = framePolicy;
+  }
+}
+
+late final _CaptureClock _captureClock;
+
+// Control only animation time during isolated captures. Delegate the existing
+// engine callback so LiveTestWidgetsFlutterBinding still decides which frames
+// to draw and SchedulerBinding retains its warm-up/reschedule handling.
+class _CaptureClock {
+  _CaptureClock(this.binding) {
+    // The launcher can initialize the binding before the app is resumed.
+    // Forced scheduling registers callbacks even while framesEnabled is false.
+    binding.scheduleForcedFrame();
+    _originalCallback = binding.platformDispatcher.onBeginFrame!;
+    // Install in main's initialization zone, before individual test zones.
+    binding.platformDispatcher.onBeginFrame = (rawTimeStamp) {
+      _latestEngineRaw = rawTimeStamp;
+      _originalCallback(_captureRaw ?? rawTimeStamp - _offset);
+    };
+  }
+
+  final IntegrationTestWidgetsFlutterBinding binding;
+  final Zone _initializationZone = Zone.current;
+  late final ui.FrameCallback _originalCallback;
+  Duration _latestEngineRaw = Duration.zero;
+  Duration _offset = Duration.zero;
+  Duration? _captureRaw;
+
+  void beginCaptureClock() {
+    assert(_captureRaw == null);
+    assert(timeDilation == 1);
+    _captureRaw = binding.currentSystemFrameTimeStamp;
+  }
+
+  void advanceCaptureClock(Duration elapsed) {
+    assert(_captureRaw != null);
+    assert(!elapsed.isNegative);
+    _captureRaw = _captureRaw! + elapsed;
+  }
+
+  void endCaptureClock() {
+    _offset = _latestEngineRaw - _captureRaw!;
+    _captureRaw = null;
+  }
+
+  void dispose() {
+    assert(_captureRaw == null);
+    _initializationZone.run(() {
+      // Restore the engine's raw-time domain only after all test captures.
+      // A new epoch keeps the scheduler's adjusted time monotonic across this
+      // final domain change; captures never reset epochs or change dilation.
+      binding.resetEpoch();
+      binding.platformDispatcher.onBeginFrame = _originalCallback;
+    });
   }
 }
 
@@ -2566,13 +2606,14 @@ void _expectPixelNear(
   Uint8List pixels,
   int index,
   List<int> expected,
-  int tolerance,
-) {
+  int tolerance, {
+  String? reason,
+}) {
   for (var channel = 0; channel < 4; channel++) {
     expect(
       pixels[index + channel],
       closeTo(expected[channel], tolerance),
-      reason: 'premultiplied topology pixel, channel=$channel',
+      reason: 'premultiplied topology pixel, channel=$channel ${reason ?? ''}',
     );
   }
 }
