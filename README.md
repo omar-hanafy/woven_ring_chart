@@ -23,7 +23,7 @@ thickness, or animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^2.0.0
+  woven_ring_chart: ^2.0.1
 ```
 
 ```dart
