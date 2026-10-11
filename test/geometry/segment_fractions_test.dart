@@ -56,6 +56,30 @@ void main() {
       expectFractions(fractions, const <double>[0.5, 0.5]);
     });
 
+    test(
+      'enforce preserves positive values whose normalized share underflows',
+      () {
+        final fractions = wovenSegmentFractions(
+          const <double>[double.minPositive, 0, double.maxFinite, 1e-300],
+          minimumFraction: 0.10,
+          policy: WovenSmallValuePolicy.enforce,
+        );
+
+        expectFractions(fractions, const <double>[0.10, 0, 0.80, 0.10]);
+        expectClose(fractions.fold(0.0, (sum, value) => sum + value), 1);
+      },
+    );
+
+    test('enforce counts underflowed positives when minimums cannot fit', () {
+      final fractions = wovenSegmentFractions(
+        const <double>[double.minPositive, 0, double.maxFinite, 1e-300],
+        minimumFraction: 0.40,
+        policy: WovenSmallValuePolicy.enforce,
+      );
+
+      expectFractions(fractions, const <double>[1 / 3, 0, 1 / 3, 1 / 3]);
+    });
+
     test('enforce inflates short segments and rescales remaining data', () {
       final fractions = wovenSegmentFractions(
         const <double>[1, 2, 97],

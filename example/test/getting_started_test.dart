@@ -1,7 +1,7 @@
 // `lib/main.dart` is what pub.dev renders under its Example tab, so it is the
 // first code most people ever see of this package. This proves the thing they
 // are about to paste actually runs.
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 import 'package:woven_ring_chart_example/main.dart';

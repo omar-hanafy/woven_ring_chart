@@ -23,7 +23,7 @@ thickness, or animate the data.
 
 ```yaml
 dependencies:
-  woven_ring_chart: ^1.0.0
+  woven_ring_chart: ^2.0.0
 ```
 
 ```dart
@@ -32,6 +32,11 @@ import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 There are no platform channels, no native code, and no transitive dependencies
 beyond Flutter itself. It runs on Android, iOS, macOS, Windows, Linux, and web.
+
+Version 2.0 requires Flutter 3.47.7 or later and Dart 3.13.5 or later. The chart
+API is unchanged; update your SDK before upgrading from 1.x. The showcase uses
+`material_ui` for Material widgets, while the chart remains independent of any
+Material library.
 
 ## Quick start
 
@@ -328,8 +333,8 @@ promised — see below.
 
 ## How this is checked
 
-298 tests run against the package and another 79 against the showcase. Most of
-the first number is one file, `test/spec/catalog_test.dart`, which shares no
+Tests cover both the package and the showcase. Most of the package's rendering
+checks live in `test/spec/catalog_test.dart`, which shares no
 helper with the rest and re-derives the geometry from the written specification
 instead of from `WovenRingGeometry`, so a bug in the production geometry cannot
 hide inside the checker meant to catch it. The whole specification collapses

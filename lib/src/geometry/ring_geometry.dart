@@ -153,13 +153,12 @@ class WovenRingGeometry {
   ///
   /// A shadow is clipped to this, so it can spill softly outside the ring but
   /// never fall inwards.
-  Path holeMask() => Path.combine(
-    PathOperation.difference,
-    Path()..addRect(
+  Path holeMask() => Path()
+    ..fillType = PathFillType.evenOdd
+    ..addRect(
       Rect.fromCircle(center: center, radius: outerRadius * 3 + thickness),
-    ),
-    Path()..addOval(Rect.fromCircle(center: center, radius: innerRadius)),
-  );
+    )
+    ..addOval(Rect.fromCircle(center: center, radius: innerRadius));
 
   /// The full ring, hole excluded.
   ///

@@ -188,19 +188,118 @@ class _WovenFrame {
     required this.fractions,
     this.topologyMerge = 0.0,
     this.topologyAnchor,
+    this.visualStyles,
   });
 
   final List<WovenSegment> segments;
   final List<double> fractions;
   final double topologyMerge;
   final int? topologyAnchor;
+  final List<_WovenVisualStyle>? visualStyles;
 
   _WovenFrame withTopology(double merge, int? anchor) => _WovenFrame(
     segments: segments,
     fractions: fractions,
     topologyMerge: merge,
     topologyAnchor: anchor,
+    visualStyles: visualStyles,
   );
+}
+
+// A canonical ring can move between logical indices while its visible style
+// morphs in place. Capture the border with its bounded derived-colour state at
+// each retarget rather than retaining earlier interpolation nodes. Logical
+// weights let a new highlight configuration act on the current style without
+// replaying that history.
+class _WovenVisualStyle {
+  const _WovenVisualStyle.segment(this.segment, this.index)
+    : weights = const <int, double>{},
+      resolvedBorder = null,
+      highlightedIndex = null,
+      highlightBorder = null;
+
+  factory _WovenVisualStyle.lerp(
+    _WovenVisualStyle a,
+    _WovenVisualStyle b,
+    double t,
+    Color surfaceColor,
+    int? highlightedIndex,
+    WovenBorder highlightBorder,
+  ) {
+    final WovenSegment segment = WovenSegment.lerp(
+      a.segment,
+      b.segment,
+      t,
+      surfaceColor: surfaceColor,
+    );
+    final Map<int, double> weights = <int, double>{};
+    void addWeights(_WovenVisualStyle style, double share) {
+      if (style.index != null) {
+        final int index = style.index!;
+        weights[index] = (weights[index] ?? 0) + share;
+      } else {
+        for (final MapEntry<int, double> entry in style.weights.entries) {
+          weights[entry.key] = (weights[entry.key] ?? 0) + entry.value * share;
+        }
+      }
+    }
+
+    addWeights(a, 1 - t);
+    addWeights(b, t);
+    return _WovenVisualStyle._(
+      segment: segment,
+      weights: Map<int, double>.unmodifiable(weights),
+      resolvedBorder: WovenBorder.lerp(
+        a.borderFor(highlightedIndex, highlightBorder, surfaceColor),
+        b.borderFor(highlightedIndex, highlightBorder, surfaceColor),
+        t,
+        fill: segment.fill,
+        surfaceColor: surfaceColor,
+      ),
+      highlightedIndex: highlightedIndex,
+      highlightBorder: highlightBorder,
+    );
+  }
+
+  const _WovenVisualStyle._({
+    required this.segment,
+    required this.weights,
+    required this.resolvedBorder,
+    required this.highlightedIndex,
+    required this.highlightBorder,
+  }) : index = null;
+
+  final WovenSegment segment;
+  final int? index;
+  final Map<int, double> weights;
+  final WovenBorder? resolvedBorder;
+  final int? highlightedIndex;
+  final WovenBorder? highlightBorder;
+
+  WovenBorder? borderFor(
+    int? highlighted,
+    WovenBorder highlight,
+    Color surface,
+  ) {
+    if (index != null) return index == highlighted ? highlight : segment.border;
+    if (highlightedIndex == highlighted && highlightBorder == highlight) {
+      return resolvedBorder;
+    }
+    final double weight = (weights[highlighted] ?? 0).clamp(0.0, 1.0);
+    if (weight == 0) return segment.border;
+    return WovenBorder.lerp(
+      segment.border,
+      highlight,
+      weight,
+      fill: segment.fill,
+      surfaceColor: surface,
+    );
+  }
+
+  WovenSegment resolve(int? highlighted, WovenBorder highlight, Color surface) {
+    final WovenBorder? border = borderFor(highlighted, highlight, surface);
+    return segment.copyWith(border: border, removeBorder: border == null);
+  }
 }
 
 class _WovenRingChartState extends State<WovenRingChart>
@@ -232,6 +331,18 @@ class _WovenRingChartState extends State<WovenRingChart>
       vsync: this,
       duration: _safeDuration(widget.transitionDuration),
     );
+    _transition.addListener(() {
+      if (_transition.value >= 1.0 &&
+          !_toFrame.fractions.any((double fraction) => fraction > 0.0)) {
+        // The fade has removed the final drawable segment. Completing the
+        // entrance now stops its ticker without changing the fade or a
+        // mid-flight retarget that brings data back before the fade finishes.
+        _animation.value = 1.0;
+        // The controller can reach its final value before its simulation
+        // reports completion. No extra transition tick can change this frame.
+        _transition.stop(canceled: false);
+      }
+    });
     _spin = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
@@ -245,7 +356,7 @@ class _WovenRingChartState extends State<WovenRingChart>
     if (widget._mode == WovenRingChartMode.loading) {
       _spin.repeat();
     } else if (widget.animation == WovenRingAnimation.none ||
-        _inputSnapshot.isEmpty) {
+        !_fromFrame.fractions.any((double fraction) => fraction > 0.0)) {
       _animation.value = 1;
     } else {
       _animation.forward();
@@ -304,11 +415,12 @@ class _WovenRingChartState extends State<WovenRingChart>
       _inputSnapshot = nextSnapshot;
       final _WovenFrame next = _resolveFrame(nextSnapshot, widget.style);
 
-      if (!hadData && hasData) {
+      if (!hadData) {
         _fromFrame = next;
         _toFrame = next;
         _transition.value = 1.0;
-        if (!_disableAnimations &&
+        if (hasData &&
+            !_disableAnimations &&
             widget.animation != WovenRingAnimation.none) {
           _animation.forward(from: 0.0);
         } else {
@@ -357,16 +469,16 @@ class _WovenRingChartState extends State<WovenRingChart>
       }
     }
 
-    if (old.animation != widget.animation && !_animation.isAnimating) {
-      _animation.value = widget.animation == WovenRingAnimation.none
-          ? 1.0
-          : _animation.value;
+    if (old.animation != widget.animation &&
+        widget.animation == WovenRingAnimation.none) {
+      _animation.value = 1.0;
     }
   }
 
   void _replay() {
     if (widget.animation == WovenRingAnimation.none) return;
-    if (_disableAnimations) {
+    if (_disableAnimations ||
+        !_currentFrame().fractions.any((double fraction) => fraction > 0.0)) {
       _animation.value = 1.0;
     } else {
       _animation.forward(from: 0.0);
@@ -399,21 +511,82 @@ class _WovenRingChartState extends State<WovenRingChart>
     final _WovenFrame from = _padFrame(_fromFrame, n);
     final _WovenFrame to = _padFrame(_toFrame, n);
     final double t = Curves.easeInOut.transform(_transition.value);
+    final List<int> fromActive = <int>[
+      for (var i = 0; i < n; i++)
+        if (from.fractions[i] > 0.0) i,
+    ];
+    final List<int> toActive = <int>[
+      for (var i = 0; i < n; i++)
+        if (to.fractions[i] > 0.0) i,
+    ];
+    if (fromActive.length == 1 &&
+        toActive.length == 1 &&
+        (fromActive.single != toActive.single || from.visualStyles != null)) {
+      final int anchor = fromActive.single;
+      final _WovenVisualStyle visible = _WovenVisualStyle.lerp(
+        _visualStyleAt(from, anchor),
+        _visualStyleAt(to, toActive.single),
+        t,
+        widget.style.surfaceColor,
+        widget.highlightedIndex,
+        widget.highlightBorder,
+      );
+      // Both endpoints are the same full-circle topology. Interpolating their
+      // logical indices as fractions would invent two woven heads, rotate the
+      // gradient, and expose a new shadow on the first tick. Morph one fixed
+      // canonical ring instead, retaining partial coverage from an empty fade.
+      final double coverage =
+          from.fractions[anchor] +
+          (to.fractions[toActive.single] - from.fractions[anchor]) * t;
+      final List<WovenSegment> canonical = <WovenSegment>[
+        for (var i = 0; i < n; i++)
+          i == anchor
+              ? visible.segment
+              : to.segments[i].copyWith(value: 0, opacity: 0),
+      ];
+      return _WovenFrame(
+        segments: List<WovenSegment>.unmodifiable(canonical),
+        fractions: List<double>.unmodifiable(<double>[
+          for (var i = 0; i < n; i++) i == anchor ? coverage : 0.0,
+        ]),
+        visualStyles: List<_WovenVisualStyle>.unmodifiable(<_WovenVisualStyle>[
+          for (var i = 0; i < n; i++)
+            i == anchor ? visible : _WovenVisualStyle.segment(canonical[i], i),
+        ]),
+      );
+    }
     final List<WovenSegment> segments = <WovenSegment>[];
     final List<double> fractions = <double>[];
+    // A canonical overlay keeps a visible geometry anchor even when its
+    // destination has a different logical index. Carry that visual identity
+    // through topology transitions so highlights morph with the destination.
+    final List<_WovenVisualStyle>? visualStyles =
+        from.visualStyles == null &&
+            from.topologyMerge <= 0.0 &&
+            to.topologyMerge <= 0.0
+        ? null
+        : <_WovenVisualStyle>[];
 
     for (var i = 0; i < n; i++) {
       WovenSegment a = from.segments[i];
       WovenSegment b = to.segments[i];
+      _WovenVisualStyle? aStyle = visualStyles == null
+          ? null
+          : _visualStyleAt(from, i);
+      _WovenVisualStyle? bStyle = visualStyles == null
+          ? null
+          : _visualStyleAt(to, i);
       if (from.fractions[i] <= 1e-12 && to.fractions[i] > 1e-12) {
         a = WovenSegment(
           value: 0,
           fill: _neighborFill(from, i),
           semanticLabel: a.semanticLabel,
         );
+        if (visualStyles != null) aStyle = _WovenVisualStyle.segment(a, i);
       }
       if (to.fractions[i] <= 1e-12 && from.fractions[i] > 1e-12) {
         WovenSegment? topologyDestination;
+        int? destinationIndex;
         if (to.topologyMerge > 0.0 && from.topologyAnchor == i) {
           for (
             var destination = 0;
@@ -422,6 +595,7 @@ class _WovenRingChartState extends State<WovenRingChart>
           ) {
             if (to.fractions[destination] > 1e-12) {
               topologyDestination = to.segments[destination];
+              destinationIndex = destination;
               break;
             }
           }
@@ -433,9 +607,22 @@ class _WovenRingChartState extends State<WovenRingChart>
           semanticLabel: topologyDestination?.semanticLabel ?? b.semanticLabel,
           opacity: topologyDestination?.opacity ?? 1.0,
         );
+        if (visualStyles != null) {
+          bStyle = _WovenVisualStyle.segment(b, destinationIndex ?? i);
+        }
       }
       segments.add(
         WovenSegment.lerp(a, b, t, surfaceColor: widget.style.surfaceColor),
+      );
+      visualStyles?.add(
+        _WovenVisualStyle.lerp(
+          aStyle!,
+          bStyle!,
+          t,
+          widget.style.surfaceColor,
+          widget.highlightedIndex,
+          widget.highlightBorder,
+        ),
       );
       fractions.add(
         from.fractions[i] + (to.fractions[i] - from.fractions[i]) * t,
@@ -457,8 +644,15 @@ class _WovenRingChartState extends State<WovenRingChart>
       fractions: List<double>.unmodifiable(fractions),
       topologyMerge: topologyMerge,
       topologyAnchor: from.topologyAnchor ?? to.topologyAnchor,
+      visualStyles: visualStyles == null
+          ? null
+          : List<_WovenVisualStyle>.unmodifiable(visualStyles),
     );
   }
+
+  static _WovenVisualStyle _visualStyleAt(_WovenFrame frame, int index) =>
+      frame.visualStyles?[index] ??
+      _WovenVisualStyle.segment(frame.segments[index], index);
 
   static _WovenFrame _resolveFrame(
     List<WovenSegment> segments,
@@ -499,6 +693,16 @@ class _WovenRingChartState extends State<WovenRingChart>
       ]),
       topologyMerge: frame.topologyMerge,
       topologyAnchor: frame.topologyAnchor,
+      visualStyles: frame.visualStyles == null
+          ? null
+          : List<_WovenVisualStyle>.unmodifiable(<_WovenVisualStyle>[
+              ...frame.visualStyles!,
+              for (var i = frame.segments.length; i < n; i++)
+                _WovenVisualStyle.segment(
+                  WovenSegment(value: 0, fill: fill),
+                  i,
+                ),
+            ]),
     );
   }
 
@@ -600,7 +804,17 @@ class _WovenRingChartState extends State<WovenRingChart>
                   children: <Widget>[
                     CustomPaint(
                       painter: WovenRingChartPainter(
-                        segments: frame.segments,
+                        segments: frame.visualStyles == null
+                            ? frame.segments
+                            : <WovenSegment>[
+                                for (final _WovenVisualStyle s
+                                    in frame.visualStyles!)
+                                  s.resolve(
+                                    widget.highlightedIndex,
+                                    widget.highlightBorder,
+                                    widget.style.surfaceColor,
+                                  ),
+                              ],
                         fractions: frame.fractions,
                         style: widget.style,
                         mode: widget._mode,
@@ -611,24 +825,15 @@ class _WovenRingChartState extends State<WovenRingChart>
                           _animation.value,
                         ),
                         spin: _spin.value,
-                        highlightedIndex: widget.highlightedIndex,
+                        highlightedIndex: frame.visualStyles == null
+                            ? widget.highlightedIndex
+                            : null,
                         highlightBorder: widget.highlightBorder,
                         topologyMerge: frame.topologyMerge,
                         topologyAnchor: frame.topologyAnchor,
                       ),
                     ),
-                    if (widget.center != null)
-                      Center(
-                        child: SizedBox(
-                          width: centreBox,
-                          height: centreBox,
-                          child: Center(
-                            child: centreIsDescribedByRing
-                                ? ExcludeSemantics(child: widget.center!)
-                                : widget.center!,
-                          ),
-                        ),
-                      ),
+                    ?child,
                   ],
                 );
               },

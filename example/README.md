@@ -1,10 +1,13 @@
 # woven_ring_chart example
 
+Requires Flutter 3.47.7 or later and Dart 3.13.5 or later. The example uses
+`material_ui` for Material widgets.
+
 The smallest thing that draws a woven ring. This is `lib/main.dart` here, and
 it is the whole file.
 
 ```dart
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 
 void main() => runApp(const MyApp());
@@ -85,3 +88,44 @@ product of the controls, so neither side can move without the other.
 
 Full documentation is in the
 [package README](https://github.com/omar-hanafy/woven_ring_chart#readme).
+
+## Runtime flow checks
+
+`integration_test/showcase_flow_test.dart` runs the published snippet, changes
+playground data and controls, checks that the preview and source stay in sync,
+replays animations, verifies reduced motion and semantics in a narrow layout,
+pauses and resumes the ten-segment app, and exercises invalid values, extreme
+finite values, and equivalent large-angle rendering. On native platforms it also
+reads back the install line and generated code from the system clipboard.
+
+Run native integration checks in debug mode (the `flutter test` command below).
+Dense-ring alpha checks borrow the chart's actual single `PictureLayer` and
+capture it with `TargetPixelFormat.rgbaFloat32`, avoiding the default Metal
+snapshot target's MSAA/resolve precision artifacts. They retain exact alpha
+assertions and save normal boundary captures for visual review. Browser checks
+use the original boundary capture; the native layer inspection requires debug
+mode.
+
+Desktop scaffolds are generated locally and excluded from the package archive.
+To prepare macOS without changing the Android, iOS, or web projects:
+
+```sh
+template_dir="$(mktemp -d)/woven_ring_chart_example"
+flutter create --no-pub --platforms=macos \
+  --project-name woven_ring_chart_example --org com.omarhanafy "$template_dir"
+cp -R "$template_dir/macos" ./macos
+flutter pub get
+flutter test integration_test/showcase_flow_test.dart -d macos
+```
+
+Generate the scaffold only when `macos/` is absent. For browser runtime checks,
+start a ChromeDriver compatible with the installed Chrome on port 4444, then:
+
+```sh
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/showcase_flow_test.dart -d web-server --wasm \
+  --web-hostname=127.0.0.1 --web-port=7357
+```
+
+Browser clipboard access depends on the browser's permission and user-gesture
+policy, so clipboard readback is covered by the native runtime checks.

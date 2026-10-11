@@ -1,5 +1,5 @@
 // The entrance animation: both styles, replay, and retargeting mid-flight.
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 

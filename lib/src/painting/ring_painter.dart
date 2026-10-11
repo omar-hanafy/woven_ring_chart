@@ -71,7 +71,7 @@ class WovenRingChartPainter extends CustomPainter {
   /// The border given to the [highlightedIndex] segment.
   final WovenBorder highlightBorder;
 
-  /// How far the canonical single ring has emerged over the woven layer, from
+  /// The canonical single ring's weight in the woven-to-single crossfade, from
   /// 0 to 1. Non-zero only while a one-to-many or many-to-one change is in
   /// flight.
   final double topologyMerge;
@@ -80,6 +80,18 @@ class WovenRingChartPainter extends CustomPainter {
   final int? topologyAnchor;
 
   static const double _tau = math.pi * 2;
+
+  // Keep painter arithmetic within one turn. At large finite angles, adding a
+  // sweep or subtracting a joint lag can lose the entire shape. Reducing by a
+  // rounded tau also loses the actual circular phase at those magnitudes:
+  // sin/cos perform the precise argument reduction pointOn already relies on.
+  // Ordinary angles keep their exact value; the public style keeps its winding.
+  double get _startAngle {
+    final double angle = style.resolvedStartAngle;
+    return angle.abs() <= _tau
+        ? angle
+        : math.atan2(math.sin(angle), math.cos(angle));
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -94,7 +106,15 @@ class WovenRingChartPainter extends CustomPainter {
         _paintLoading(canvas, g);
         break;
       case WovenRingChartMode.data:
+        // Surface replacement owns the chart's pixels, not its ancestor's
+        // canvas. A RepaintBoundary records drawing but does not isolate src
+        // blending; keep transparent surfaces from erasing a parent backdrop.
+        final bool replacesSurface = segments.any(_isTranslucent);
+        if (replacesSurface) {
+          canvas.saveLayer(Offset.zero & size, Paint());
+        }
         _paintRing(canvas, g);
+        if (replacesSurface) canvas.restore();
         break;
     }
   }
@@ -109,7 +129,7 @@ class WovenRingChartPainter extends CustomPainter {
   void _paintLoading(Canvas canvas, WovenRingGeometry g) {
     canvas.drawPath(g.annulus(), Paint()..color = _loadingTrack);
     final double direction = style.clockwise ? 1.0 : -1.0;
-    final double from = style.resolvedStartAngle + direction * spin * _tau;
+    final double from = _startAngle + direction * spin * _tau;
     canvas.drawPath(
       g.segmentPath(
         from,
@@ -120,7 +140,12 @@ class WovenRingChartPainter extends CustomPainter {
     );
   }
 
-  void _paintRing(Canvas canvas, WovenRingGeometry g) {
+  void _paintRing(
+    Canvas canvas,
+    WovenRingGeometry g, {
+    bool allowTopology = true,
+    int? canonicalIndex,
+  }) {
     final int n = segments.length;
     if (n == 0) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
@@ -128,12 +153,53 @@ class WovenRingChartPainter extends CustomPainter {
     }
 
     assert(fractions.length == n);
-    final List<int> active = <int>[
-      for (var i = 0; i < n; i++)
-        if (fractions[i] > 0) i,
-    ];
+    final List<int> active = canonicalIndex == null
+        ? <int>[
+            for (var i = 0; i < n; i++)
+              if (fractions[i] > 0) i,
+          ]
+        : <int>[canonicalIndex];
     if (active.isEmpty) {
       canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
+      return;
+    }
+
+    final double merge = topologyMerge.isFinite
+        ? topologyMerge.clamp(0.0, 1.0)
+        : 0.0;
+    if (allowTopology &&
+        active.length > 1 &&
+        active.contains(topologyAnchor) &&
+        merge > 0) {
+      final Rect bounds = Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2);
+      // Complementary byte weights sum to exactly one after raster
+      // quantization, including partial borders shared by both results.
+      final int canonicalAlpha = (merge * 255).round();
+      // Crossfade complete premultiplied results, including the neutral track
+      // and any empty-state fade. SrcOver or a shared underlay would count
+      // translucent pixels twice. Surface replacement stays within each
+      // render; the outer layer receives only the two weighted results.
+      canvas.saveLayer(bounds, Paint());
+      canvas.saveLayer(
+        bounds,
+        Paint()..color = Color.fromARGB(255 - canonicalAlpha, 255, 255, 255),
+      );
+      _paintRing(canvas, g, allowTopology: false);
+      canvas.restore();
+      canvas.saveLayer(
+        bounds,
+        Paint()
+          ..blendMode = BlendMode.plus
+          ..color = Color.fromARGB(canonicalAlpha, 255, 255, 255),
+      );
+      _paintRing(
+        canvas,
+        g,
+        allowTopology: false,
+        canonicalIndex: topologyAnchor,
+      );
+      canvas.restore();
+      canvas.restore();
       return;
     }
 
@@ -163,7 +229,7 @@ class WovenRingChartPainter extends CustomPainter {
 
     final List<WovenSegmentExtent> extents = g.extents(
       fractions,
-      style.resolvedStartAngle,
+      _startAngle,
       clockwise: style.clockwise,
     );
     final double direction = style.clockwise ? 1.0 : -1.0;
@@ -178,21 +244,6 @@ class WovenRingChartPainter extends CustomPainter {
 
     if (active.length == 1) {
       final int index = active.single;
-      final bool animationComplete =
-          animation == WovenRingAnimation.none || animationProgress >= 1.0;
-      if (animationComplete) {
-        _paintSmoothSingle(canvas, g, index, extents[index].start);
-        if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
-          _paintSingleJoint(
-            canvas,
-            g,
-            extents[index].start,
-            segments[index].opacity,
-          );
-        }
-        if (fadesToEmpty) canvas.restore();
-        return;
-      }
       final double head = extents[index].start;
       final double fullEnd = head + direction * _tau;
       final double visibleEnd = _visibleEnd(
@@ -205,15 +256,17 @@ class WovenRingChartPainter extends CustomPainter {
         clockwise: style.clockwise,
       );
       if (!visibleEnd.isNaN) {
-        _paintSegment(
-          canvas,
-          g,
-          index,
-          head,
-          visibleEnd,
-          shaderEnd: fullEnd,
-          composeSurface: true,
-        );
+        _paintSmoothSingle(canvas, g, index, head, visibleEnd: visibleEnd);
+        if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
+          canvas.save();
+          if ((visibleEnd - head).abs() < _tau - 1e-9) {
+            canvas.clipPath(
+              g.segmentPath(head, visibleEnd, clockwise: style.clockwise),
+            );
+          }
+          _paintSingleJoint(canvas, g, head, segments[index].opacity);
+          canvas.restore();
+        }
       }
       if (fadesToEmpty) canvas.restore();
       return;
@@ -229,9 +282,6 @@ class WovenRingChartPainter extends CustomPainter {
         ? -1
         : active.indexOf(topologyAnchor!);
     final int? cycleAnchorPosition = anchorPosition < 0 ? null : anchorPosition;
-    final double resolvedTopologyMerge = topologyMerge.isFinite
-        ? topologyMerge.clamp(0.0, 1.0)
-        : 0.0;
     // Keep one stable data-order sequence through the entire animation and every
     // transition. A base fill guarantees antialiased coverage. Exact cyclic
     // owner masks then repaint each visible segment everywhere its successor is
@@ -284,15 +334,28 @@ class WovenRingChartPainter extends CustomPainter {
     // short one, or two whose joints have merged. Every segment is then excluded
     // by its own successor, nothing is painted, and whatever the underlay left
     // there shows through.
+    final List<double> lapSpans = <double>[
+      for (var position = 0; position < paintOrder.length; position++)
+        math.min(
+          g.jointLag,
+          direction *
+              (visibleEnds[position] - extents[paintOrder[position]].start),
+        ),
+    ];
     final List<Path?> laps = <Path?>[
       for (var position = 0; position < paintOrder.length; position++)
         visiblePaths[position] == null
             ? null
             : g.segmentPath(
                 extents[paintOrder[position]].start,
-                extents[paintOrder[position]].start + direction * g.jointLag,
+                extents[paintOrder[position]].start +
+                    direction * lapSpans[position],
                 clockwise: style.clockwise,
               ),
+    ];
+
+    final List<Path?> outsideLaps = <Path?>[
+      for (final Path? lap in laps) lap == null ? null : _outsidePath(g, lap),
     ];
 
     // Coverage underlay. Borders and shadow are deliberately omitted: covered
@@ -378,17 +441,43 @@ class WovenRingChartPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Every head takes its lap outright. Laid down in data order, a later head
-    // beats an earlier one wherever two laps meet, which is the weave rule and
-    // is what the successor mask already says at every joint it can express.
-    //
-    // The lap is the head's whole ground, not just its round cap. A cap disc is
-    // tangent to both edges of the ring, so clipping to it would leave the
-    // predecessor's tail on top along the outer and inner edges: the head would
-    // read as a detached circle with the older colour arcing over it. One
-    // overlap depth of the segment's own body is exactly the span from this
-    // head's tip to the predecessor's tail tip, which is the whole lens the two
-    // silhouettes share at this joint and nothing beyond it.
+    // Every head takes its visible lap, except where a later cyclic head
+    // already owns that ground. Apply the same rule to every index: a linear
+    // paint order plus a first-head repair cannot resolve dense overlap runs
+    // that cross the seam and continue beyond the first head.
+    // Only the revealed part participates, so an emerging head cannot mask
+    // another segment with the portion of its lap that has not appeared yet.
+    final double lapReach = g.jointLag + 2 * g.capAngularExtent;
+    final List<List<int>> lapMasks = <List<int>>[
+      for (var position = 0; position < paintOrder.length; position++) <int>[],
+    ];
+    for (var position = 0; position < paintOrder.length; position++) {
+      if (laps[position] == null) continue;
+      final List<int> masks = lapMasks[position];
+      double coveredEnd = double.negativeInfinity;
+      for (var step = 1; step < paintOrder.length; step++) {
+        final int other = (position + step) % paintOrder.length;
+        final double ahead = _forward(
+          extents[paintOrder[other]].boundaryStart -
+              extents[paintOrder[position]].boundaryStart,
+          direction,
+        );
+        if (ahead >= lapReach) break;
+        if (ahead <= 0 || outsideLaps[other] == null) continue;
+        final double end = ahead + lapSpans[other];
+        // Successive starts increase. A lap ending inside a retained arc is
+        // contained in that arc's constant-radius capsule as well.
+        if (end <= coveredEnd) continue;
+        masks.add(other);
+        coveredEnd = end;
+        // Any point shared by this lap and a farther one must also cross the
+        // intervening arc once that arc reaches this lap's endpoint. The
+        // allowed widths keep the whole candidate interval below one turn.
+        if (coveredEnd >= lapSpans[position]) break;
+      }
+      // Preserve the original order among retained clips, including the seam.
+      masks.sort();
+    }
     void paintLaps({required bool fill}) {
       for (var position = 0; position < paintOrder.length; position++) {
         final Path? path = visiblePaths[position];
@@ -398,6 +487,10 @@ class WovenRingChartPainter extends CustomPainter {
         canvas.save();
         canvas.clipPath(path, doAntiAlias: false);
         canvas.clipPath(lap, doAntiAlias: false);
+        for (final int other in lapMasks[position]) {
+          canvas.clipPath(outsideLaps[other]!, doAntiAlias: false);
+        }
+        if (!fill) canvas.drawPaint(Paint()..blendMode = BlendMode.clear);
         if (fill && _isTranslucent(segments[i])) _paintSurface(canvas, path);
         _paintSegment(
           canvas,
@@ -412,49 +505,6 @@ class WovenRingChartPainter extends CustomPainter {
         );
         canvas.restore();
       }
-
-      // The cyclic closure. Segment zero's head has to lap the last segment's tail
-      // exactly like every other joint, but z-order is linear and segment zero
-      // was laid first, so its head is painted once more at the very top. It
-      // must not out-rank a head that genuinely comes after it: a segment whose
-      // own head sits within one lap ahead of segment zero's is a later joint,
-      // not the seam, and keeps its ground.
-      if (paintOrder.length < 2) return;
-      final Path? firstPath = visiblePaths.first;
-      final Path? firstLap = laps.first;
-      if (firstPath == null || firstLap == null) return;
-      final int first = paintOrder.first;
-      final double reach = g.jointLag + 2 * g.capAngularExtent;
-      canvas.save();
-      canvas.clipPath(firstPath, doAntiAlias: false);
-      canvas.clipPath(firstLap, doAntiAlias: false);
-      for (var position = 1; position < paintOrder.length; position++) {
-        final Path? otherLap = laps[position];
-        if (otherLap == null) continue;
-        final double ahead = _forward(
-          extents[paintOrder[position]].boundaryStart -
-              extents[first].boundaryStart,
-          direction,
-        );
-        if (ahead < reach) {
-          canvas.clipPath(_outsidePath(g, otherLap), doAntiAlias: false);
-        }
-      }
-      if (fill && _isTranslucent(segments[first])) {
-        _paintSurface(canvas, firstPath);
-      }
-      _paintSegment(
-        canvas,
-        g,
-        first,
-        extents[first].start,
-        visibleEnds.first,
-        shaderEnd: extents[first].end,
-        paintShadow: false,
-        paintFill: fill,
-        paintBorder: !fill,
-      );
-      canvas.restore();
     }
 
     paintLaps(fill: true);
@@ -493,71 +543,51 @@ class WovenRingChartPainter extends CustomPainter {
         if (paintOrder.length != 2 && outsideSuccessor != null) {
           canvas.clipPath(outsideSuccessor, doAntiAlias: false);
         }
-        final double wovenTopologyOpacity = cycleAnchorPosition == null
-            ? 1.0
-            : 1.0 - resolvedTopologyMerge;
-        _paintShadow(
-          canvas,
-          g,
-          extents[i].start,
-          opacity * wovenTopologyOpacity,
-        );
+        _paintShadow(canvas, g, extents[i].start, opacity);
         canvas.restore();
       }
     }
 
     // Borders are a property of the visible owner, never of a covered tail.
-    for (var position = 0; position < paintOrder.length; position++) {
-      final Path? path = visiblePaths[position];
-      if (path == null) continue;
-      final int i = paintOrder[position];
-      final Path? outsideSuccessor =
-          outsidePaths[(position + 1) % paintOrder.length];
-      canvas.save();
-      canvas.clipPath(path, doAntiAlias: false);
-      if (outsideSuccessor != null) {
-        canvas.clipPath(outsideSuccessor, doAntiAlias: false);
-      }
-      _paintSegment(
-        canvas,
-        g,
-        i,
-        extents[i].start,
-        visibleEnds[position],
-        shaderEnd: extents[i].end,
-        paintShadow: false,
-        paintFill: false,
-      );
-      canvas.restore();
-    }
-
-    paintLaps(fill: false);
-
-    // Leave the ordinary woven compositor completely unchanged at merge zero.
-    // The canonical single ring is an overlay, not a different base/layer
-    // stack, so the immediate update frame is bit-for-bit the previous woven
-    // frame and each later tick changes only by the requested merge opacity.
-    if (cycleAnchorPosition != null && resolvedTopologyMerge > 0.0) {
-      final int anchor = active[cycleAnchorPosition];
+    // Resolve all ownership passes on a transparent border layer, replacing
+    // each owned region before drawing its line. A head can belong to both a
+    // body mask and a lap, but its requested
+    // opacity must blend over the fill only once. Clearing the whole region
+    // also removes a predecessor's line when a borderless head takes it.
+    if (active.any((int i) => _borderFor(i) != null)) {
       canvas.saveLayer(
         Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2),
-        Paint()
-          ..color = _withOpacity(
-            const Color(0xFFFFFFFF),
-            resolvedTopologyMerge,
-          ),
+        Paint(),
       );
-      _paintSmoothSingle(canvas, g, anchor, extents[anchor].start);
-      if (style.singleSegmentStyle == WovenSingleSegmentStyle.jointed) {
-        _paintSingleJoint(
+      for (var position = 0; position < paintOrder.length; position++) {
+        final Path? path = visiblePaths[position];
+        if (path == null) continue;
+        final int i = paintOrder[position];
+        final Path? outsideSuccessor =
+            outsidePaths[(position + 1) % paintOrder.length];
+        canvas.save();
+        canvas.clipPath(path, doAntiAlias: false);
+        if (outsideSuccessor != null) {
+          canvas.clipPath(outsideSuccessor, doAntiAlias: false);
+        }
+        canvas.drawPaint(Paint()..blendMode = BlendMode.clear);
+        _paintSegment(
           canvas,
           g,
-          extents[anchor].start,
-          segments[anchor].opacity,
+          i,
+          extents[i].start,
+          visibleEnds[position],
+          shaderEnd: extents[i].end,
+          paintShadow: false,
+          paintFill: false,
         );
+        canvas.restore();
       }
+
+      paintLaps(fill: false);
       canvas.restore();
     }
+
     if (fadesToEmpty) canvas.restore();
   }
 
@@ -610,18 +640,42 @@ class WovenRingChartPainter extends CustomPainter {
     Canvas canvas,
     WovenRingGeometry g,
     int index,
-    double head,
-  ) {
+    double head, {
+    double? visibleEnd,
+  }) {
     final WovenSegment segment = segments[index];
     final double opacity = segment.opacity.isFinite
         ? segment.opacity.clamp(0.0, 1.0)
         : 1.0;
+    final double direction = style.clockwise ? 1.0 : -1.0;
+    final double end = visibleEnd ?? head + direction * _tau;
+    final Path ring = g.segmentPath(head, end, clockwise: style.clockwise);
     if (opacity <= 0.0) {
-      canvas.drawPath(g.annulus(), Paint()..color = _emptyTrack);
+      // A positive-value segment still owns its surface when its fill reaches
+      // zero alpha, exactly as it does throughout the opacity transition.
+      _paintSurface(canvas, ring);
       return;
     }
-    final double direction = style.clockwise ? 1.0 : -1.0;
-    final Path ring = g.annulus();
+    if (style.shadow != null && (end - head).abs() < _tau - 1e-9) {
+      // The returning tail buries the head's exposed caster as the ring
+      // closes. Subtract that actual geometry before blurring, so its shadow
+      // disappears continuously instead of switching off on the final frame.
+      final double contact = 2 * g.capAngularExtent;
+      _paintShadow(
+        canvas,
+        g,
+        head,
+        opacity,
+        occluder: _tau - (end - head).abs() < contact
+            ? (Path()..addOval(
+                Rect.fromCircle(
+                  center: g.pointOn(g.trackRadius, end),
+                  radius: g.capRadius,
+                ),
+              ))
+            : null,
+      );
+    }
     final Paint fill = Paint()..isAntiAlias = true;
     // A sweep that has to close on itself wraps somewhere, and the wrap is a
     // straight radial line: the one edge shape this chart promises never to
@@ -634,7 +688,21 @@ class WovenRingChartPainter extends CustomPainter {
     } else {
       fill.shader = shader;
     }
-    if (_isTranslucent(segment)) _paintSurface(canvas, ring);
+    final bool translucent = _isTranslucent(segment);
+    final bool composeLap =
+        translucent &&
+        !segment.fill.isSolid &&
+        style.gradientAxis == WovenGradientAxis.alongSegment;
+    if (translucent) _paintSurface(canvas, ring);
+    if (composeLap) {
+      // Compose the wrap and its lap as one translucent fill, then blend that
+      // fill once over the surface. Replacing the lap inside this layer also
+      // keeps its antialiased interior edge at the same effective opacity.
+      canvas.saveLayer(
+        Rect.fromLTWH(0, 0, g.center.dx * 2, g.center.dy * 2),
+        Paint(),
+      );
+    }
     canvas.drawPath(ring, fill);
 
     // The lap: one overlap depth of the segment's own body, carrying the head end
@@ -653,6 +721,10 @@ class WovenRingChartPainter extends CustomPainter {
         opacity,
       );
       if (lap != null) {
+        canvas.save();
+        if ((end - head).abs() < _tau - 1e-9) {
+          canvas.clipPath(ring, doAntiAlias: false);
+        }
         canvas.drawPath(
           g.segmentPath(
             head,
@@ -661,17 +733,20 @@ class WovenRingChartPainter extends CustomPainter {
           ),
           Paint()
             ..shader = lap
+            ..blendMode = composeLap ? BlendMode.src : BlendMode.srcOver
             ..isAntiAlias = true,
         );
+        canvas.restore();
       }
     }
+    if (composeLap) canvas.restore();
 
     final WovenBorder? border = _borderFor(index);
     if (border == null) return;
     canvas.save();
     canvas.clipPath(ring);
     canvas.drawPath(
-      ring,
+      _simplified(g, ring, head, end),
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = border.resolvedWidthFraction * g.thickness * 2
@@ -737,7 +812,12 @@ class WovenRingChartPainter extends CustomPainter {
     final double opacity = segment.opacity.isFinite
         ? segment.opacity.clamp(0.0, 1.0)
         : 1.0;
-    if (opacity <= 0.0) return;
+    if (opacity <= 0.0) {
+      if (paintFill && composeSurface) {
+        _paintSurface(canvas, g.segmentPath(a, b, clockwise: style.clockwise));
+      }
+      return;
+    }
     final Path path = g.segmentPath(a, b, clockwise: style.clockwise);
 
     if (paintShadow && style.shadow != null) {
@@ -749,15 +829,9 @@ class WovenRingChartPainter extends CustomPainter {
         _paintSurface(canvas, path);
       }
       final Paint fill = Paint()..isAntiAlias = true;
-      final bool fullTurn = (b - a).abs() >= _tau - 1e-9;
-      final double direction = style.clockwise ? 1.0 : -1.0;
-      final Shader? shader = _shaderFor(
-        g,
-        segment.fill,
-        fullTurn ? style.resolvedStartAngle : a,
-        fullTurn ? style.resolvedStartAngle + direction * _tau : shaderEnd,
-        opacity,
-      );
+      // Saturating the silhouette to an annulus must not relocate its head
+      // or change the cap-to-cap gradient slope.
+      final Shader? shader = _shaderFor(g, segment.fill, a, shaderEnd, opacity);
       if (shader != null) {
         fill.shader = shader;
       } else {
@@ -842,8 +916,9 @@ class WovenRingChartPainter extends CustomPainter {
     Canvas canvas,
     WovenRingGeometry g,
     double headAngle,
-    double opacity,
-  ) {
+    double opacity, {
+    Path? occluder,
+  }) {
     final WovenShadow shadow = style.shadow!;
     final double blur = shadow.resolvedBlurFraction * g.thickness;
     final double offset = shadow.resolvedOffsetFraction * g.thickness;
@@ -863,7 +938,10 @@ class WovenRingChartPainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(g.holeMask());
     canvas.drawPath(
-      head.shift(back),
+      (occluder == null
+              ? head
+              : Path.combine(PathOperation.difference, head, occluder))
+          .shift(back),
       Paint()
         ..color = _withOpacity(shadow.color, opacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, blur),
@@ -949,15 +1027,18 @@ class WovenRingChartPainter extends CustomPainter {
     final double direction = style.clockwise ? 1.0 : -1.0;
     final double head = a - direction * g.capAngularExtent;
     final double tail = b + direction * g.capAngularExtent;
-    final double from = direction > 0 ? head : tail;
-    final double to = direction > 0 ? tail : head;
-    if (direction < 0) colors = colors.reversed.toList(growable: false);
     return SweepGradient(
       startAngle: 0,
-      endAngle: math.max(to - from, 1e-4),
+      endAngle: math.max(direction * (tail - head), 1e-4),
       colors: colors,
       tileMode: TileMode.clamp,
-      transform: GradientRotation(from),
+      // Both directions start at the head. Anchoring a reversed CCW sweep
+      // at the tail aliases the head to the tail color when overlap plus caps
+      // exceeds one turn. Reflecting the shader preserves the full span and
+      // slope while keeping the visible head interval before the polar wrap.
+      transform: style.clockwise
+          ? GradientRotation(head)
+          : _CounterClockwiseSweep(head),
     ).createShader(box);
   }
 
@@ -983,4 +1064,28 @@ class WovenRingChartPainter extends CustomPainter {
       old.style != style ||
       !listEquals(old.fractions, fractions) ||
       !listEquals(old.segments, segments);
+}
+
+/// Maps the shader's increasing angle to a counter-clockwise angle from [head].
+/// Only the shader is reflected; the segment silhouette and ownership stay put.
+class _CounterClockwiseSweep extends GradientTransform {
+  const _CounterClockwiseSweep(this.head);
+
+  final double head;
+
+  @override
+  Matrix4 transform(Rect bounds, {TextDirection? textDirection}) {
+    final double cosine = math.cos(head);
+    final double sine = math.sin(head);
+    final Offset center = bounds.center;
+    // Translate to the center, reflect y, rotate to the head, then translate
+    // back. The explicit matrix keeps the reflection centered on this ring.
+    return Matrix4.identity()
+      ..setEntry(0, 0, cosine)
+      ..setEntry(0, 1, sine)
+      ..setEntry(1, 0, sine)
+      ..setEntry(1, 1, -cosine)
+      ..setEntry(0, 3, center.dx - cosine * center.dx - sine * center.dy)
+      ..setEntry(1, 3, center.dy - sine * center.dx + cosine * center.dy);
+  }
 }

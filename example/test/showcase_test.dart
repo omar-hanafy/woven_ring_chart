@@ -4,15 +4,28 @@
 //
 // The panel's contents are proved honest in playground_config_test.dart. What
 // is proved here is the wiring: that a control reaches both of them.
-import 'package:flutter/material.dart';
+import 'dart:io';
+
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:woven_ring_chart/woven_ring_chart.dart';
 import 'package:woven_ring_chart_example/showcase.dart';
 import 'package:woven_ring_chart_example/src/package_info.dart';
 import 'package:woven_ring_chart_example/src/ui/code_block.dart';
+import 'package:woven_ring_chart_example/src/ui/section.dart';
 
 void main() {
+  test('the local install version matches the package being demonstrated', () {
+    final source = File('../pubspec.yaml').readAsStringSync();
+    final version = RegExp(
+      r'^version:\s*(\S+)',
+      multiLine: true,
+    ).firstMatch(source)!.group(1)!;
+    expect(kPackageVersion, version);
+    expect(kInstallLine, 'woven_ring_chart: ^$version');
+  });
+
   group('the page', () {
     testWidgets('opens on the hero, with the ring and the install line', (
       WidgetTester tester,
@@ -69,6 +82,23 @@ void main() {
   });
 
   group('the hero', () {
+    testWidgets('keeps every link reachable at 320 pixels', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(const WovenRingChartDemoApp());
+      await tester.pump(const Duration(milliseconds: 1200));
+      expect(tester.takeException(), isNull);
+      for (final label in ['pub.dev', 'GitHub', 'API docs']) {
+        final link = find.byKey(ValueKey<String>('link-$label'));
+        await tester.ensureVisible(link);
+        await tester.pump();
+        expect(link.hitTestable(), findsOneWidget);
+        final rect = tester.getRect(link);
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(320));
+      }
+    });
+
     testWidgets('copies the dependency line to the clipboard', (
       WidgetTester tester,
     ) async {
@@ -108,6 +138,21 @@ void main() {
         expect(source, contains(value));
       }
       expect(source, contains("semanticLabel: 'Spending by category'"));
+    });
+  });
+
+  group('fills', () {
+    testWidgets('the displayed gradient wraps to the first palette colour', (
+      tester,
+    ) async {
+      await _pumpShowcase(tester);
+      await _scrollTo(tester, find.text('Fills and borders'));
+      final card = tester.widget<DemoCard>(
+        find.byKey(const ValueKey<String>('fill-card-gradient')),
+      );
+      expect(card.source, contains('colors[(i + 1) % colors.length]'));
+      final chart = card.chart as WovenRingChart;
+      expect(chart.segments.last.fill.tail, WovenPalette.quartet.first);
     });
   });
 
