@@ -12,7 +12,7 @@ library;
 /// what a local `flutter run` shows.
 const String kPackageVersion = String.fromEnvironment(
   'wovenVersion',
-  defaultValue: '2.0.1',
+  defaultValue: '2.0.2',
 );
 
 /// The dependency line, exactly as it goes in a `pubspec.yaml`.

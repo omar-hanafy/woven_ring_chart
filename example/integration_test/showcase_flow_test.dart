@@ -511,15 +511,6 @@ void main() {
       // exact endpoint must not replace it with the neutral empty track.
       final framePolicy = binding.framePolicy;
       binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.onlyPumps;
-      final snapshots = <ui.Image>[];
-      ui.Image snapshot() {
-        final image = tester
-            .renderObject<RenderRepaintBoundary>(capture)
-            .toImageSync(pixelRatio: 1);
-        snapshots.add(image);
-        return image;
-      }
-
       try {
         const handoffDuration = Duration(milliseconds: 480);
         const fillA = WovenFill.gradient(
@@ -555,54 +546,27 @@ void main() {
           });
           await tester.pumpAndSettle();
           final before = await _boundaryPixels(tester, capture);
-          update(() {
-            segments = const [
-              WovenSegment(value: 0, fill: fillA),
-              WovenSegment(value: 100, fill: fillB),
-            ];
-          });
-          final startedAt = await _pumpTimestamp(tester);
-          final immediateImage = snapshot();
-          final firstAt = await _pumpTimestamp(
+          final frames = await _timedFrames(
             tester,
-            const Duration(milliseconds: 1),
+            capture,
+            handoffDuration,
+            () => update(() {
+              segments = const [
+                WovenSegment(value: 0, fill: fillA),
+                WovenSegment(value: 100, fill: fillB),
+              ];
+            }),
           );
-          final firstFraction =
-              (firstAt - startedAt).inMicroseconds /
-              handoffDuration.inMicroseconds;
-          // Live pumps are display frames, not exact fake-clock milliseconds.
-          // Require an actual first frame before 10% of the duration elapsed.
-          expect(firstFraction, greaterThan(0));
-          expect(firstFraction, lessThan(.1));
-          final firstImage = snapshot();
-          var lastAt = await _pumpTimestamp(
-            tester,
-            const Duration(milliseconds: 360),
+          final firstFraction = frames.firstFraction;
+          final lastFraction = frames.lastFraction;
+          debugPrint(
+            'handoff clockwise=$direction highlighted=${scenario.highlighted} '
+            'firstFraction=$firstFraction lastFraction=$lastFraction',
           );
-          for (var step = 0; step < 100; step++) {
-            final elapsed = lastAt - startedAt;
-            if (elapsed.inMicroseconds >= handoffDuration.inMicroseconds * .9) {
-              break;
-            }
-            lastAt = await _pumpTimestamp(
-              tester,
-              const Duration(milliseconds: 1),
-            );
-          }
-          final lastFraction =
-              (lastAt - startedAt).inMicroseconds /
-              handoffDuration.inMicroseconds;
-          expect(lastFraction, greaterThanOrEqualTo(.9));
-          expect(lastFraction, lessThan(1));
-          final penultimateImage = snapshot();
-          await tester.pumpAndSettle();
-          final endImage = snapshot();
-          // Capture scene handles synchronously, then read pixels afterward.
-          // GPU readback latency must not consume the timed endpoint windows.
-          expect(await _imagePixels(immediateImage), orderedEquals(before));
-          final first = await _imagePixels(firstImage);
-          final penultimate = await _imagePixels(penultimateImage);
-          final end = await _imagePixels(endImage);
+          expect(frames.immediate, orderedEquals(before));
+          final first = frames.first;
+          final penultimate = frames.last;
+          final end = frames.end;
           final firstEase = Curves.easeInOut.transform(firstFraction);
           final lastEase = Curves.easeInOut.transform(lastFraction);
           expect(
@@ -610,7 +574,7 @@ void main() {
             lessThanOrEqualTo(255 * firstEase + 2),
             reason:
                 'first handoff frame clockwise=$direction '
-                'elapsed=${firstAt - startedAt}',
+                'fraction=$firstFraction',
           );
           if (scenario.highlighted) {
             expect(
@@ -626,7 +590,7 @@ void main() {
             lessThanOrEqualTo(255 * (1 - lastEase) + 2),
             reason:
                 'last handoff frame clockwise=$direction '
-                'elapsed=${lastAt - startedAt}',
+                'fraction=$lastFraction',
           );
           if (scenario.highlighted) {
             // This sample lies 2.4px inside the inner border at size 480.
@@ -643,9 +607,6 @@ void main() {
           expect(await _boundaryPixels(tester, capture), orderedEquals(end));
         }
       } finally {
-        for (final image in snapshots) {
-          image.dispose();
-        }
         binding.framePolicy = framePolicy;
       }
       await _disposeApp(tester);
@@ -955,6 +916,7 @@ void main() {
             capture,
             duration,
             controller.replay,
+            diagnose: true,
           );
           // Public defaults: shadow reach=.35, thicknessFraction=.2 and
           // overlap=.5. Re-derive the inset ring without painter geometry.
@@ -1042,6 +1004,16 @@ void main() {
               }
             }
           }
+          debugPrint(
+            'shadow entrance=$entrance clockwise=$drawsClockwise '
+            'middleFraction=${reveal.middleFraction} '
+            'lastFraction=${reveal.lastFraction} '
+            'middleEase=$middleProgress lastEase=$finalProgress '
+            'captures=${reveal.diagnostics} '
+            'holeMiddle=${_holeDiagnostics(reveal.middle, 480, inner - 2)} '
+            'holeLast=${_holeDiagnostics(reveal.last, 480, inner - 2)} '
+            'holeEnd=${_holeDiagnostics(reveal.end, 480, inner - 2)}',
+          );
           expect(middleExteriorAlpha, greaterThan(0));
           expect(lastExteriorAlpha, lessThanOrEqualTo(alphaBound));
           expect(
@@ -2370,30 +2342,73 @@ Future<
     Uint8List middle,
     Uint8List last,
     Uint8List end,
+    double firstFraction,
     double middleFraction,
     double lastFraction,
+    Map<String, Map<String, Object?>> diagnostics,
   })
 >
 _timedFrames(
   WidgetTester tester,
   Finder capture,
   Duration duration,
-  VoidCallback trigger,
-) async {
+  VoidCallback trigger, {
+  bool diagnose = false,
+}) async {
   final images = <ui.Image>[];
+  final diagnostics = <String, Map<String, Object?>>{};
   // Resolve the live boundary before waiting: test finders are guarded and
   // cannot be queried from a frame callback during pumpAndSettle.
   final boundary = tester.renderObject<RenderRepaintBoundary>(capture);
-  ui.Image snapshot() {
+  final paint = diagnose
+      ? tester.renderObject<RenderCustomPaint>(
+          find.descendant(of: capture, matching: find.byType(CustomPaint)),
+        )
+      : null;
+  ui.Image snapshot(String phase) {
     final image = boundary.toImageSync(pixelRatio: 1);
     images.add(image);
+    if (diagnose) {
+      final frame = paint!.painter! as WovenRingChartPainter;
+      final shadow = frame.style.shadow;
+      diagnostics[phase] = {
+        'boundarySize': boundary.size.toString(),
+        'imageSize': [image.width, image.height],
+        'paintSize': paint.size.toString(),
+        'progress': frame.animationProgress,
+        'fractions': frame.fractions,
+        'opacities': frame.segments.map((value) => value.opacity).toList(),
+        'borders': frame.segments
+            .map((value) => value.border.toString())
+            .toList(),
+        'surface': frame.style.surfaceColor.toString(),
+        'shadow': shadow == null
+            ? null
+            : [shadow.color.toString(), shadow.reach, shadow.blurFraction],
+        'highlight': frame.highlightedIndex,
+        'topologyMerge': frame.topologyMerge,
+        'topologyAnchor': frame.topologyAnchor,
+      };
+    }
     return image;
+  }
+
+  Future<Uint8List> pixels(ui.Image image, String phase) async {
+    final data = (await image.toByteData())!;
+    if (diagnose) {
+      diagnostics[phase]!.addAll({
+        'byteLength': data.lengthInBytes,
+        'byteOffset': data.offsetInBytes,
+        'bufferLength': data.buffer.lengthInBytes,
+      });
+    }
+    return data.buffer.asUint8List();
   }
 
   try {
     trigger();
     final startedAt = await _pumpTimestamp(tester);
-    final immediate = snapshot();
+    final immediate = snapshot('immediate');
     final firstAt = await _pumpTimestamp(
       tester,
       const Duration(milliseconds: 1),
@@ -2402,7 +2417,7 @@ _timedFrames(
         (firstAt - startedAt).inMicroseconds / duration.inMicroseconds;
     expect(firstFraction, greaterThan(0));
     expect(firstFraction, lessThan(.1));
-    final first = snapshot();
+    final first = snapshot('first');
     final remainingToMiddle =
         (duration.inMicroseconds * .4).round() -
         (firstAt - startedAt).inMicroseconds;
@@ -2410,7 +2425,7 @@ _timedFrames(
       tester,
       Duration(microseconds: math.max(0, remainingToMiddle)),
     );
-    final middle = snapshot();
+    final middle = snapshot('middle');
     // Timer-driven pumps can jump across the final display interval. Observe
     // every live frame instead, retaining a synchronous snapshot only when
     // its real timestamp is within the required pre-completion window.
@@ -2424,7 +2439,7 @@ _timedFrames(
           (timestamp - startedAt).inMicroseconds / duration.inMicroseconds;
       if (last == null && fraction >= .97 && fraction < 1) {
         lastAt = timestamp;
-        last = snapshot();
+        last = snapshot('last');
       }
       if (fraction < 1) {
         binding.addPostFrameCallback(observeLastFrame);
@@ -2456,13 +2471,15 @@ _timedFrames(
         (lastAt! - startedAt).inMicroseconds / duration.inMicroseconds;
     expect(lastFraction, greaterThanOrEqualTo(.97));
     expect(lastFraction, lessThan(1));
-    final end = snapshot();
+    final end = snapshot('end');
     final result = (
-      immediate: await _imagePixels(immediate),
-      first: await _imagePixels(first),
-      middle: await _imagePixels(middle),
-      last: await _imagePixels(last!),
-      end: await _imagePixels(end),
+      immediate: await pixels(immediate, 'immediate'),
+      first: await pixels(first, 'first'),
+      middle: await pixels(middle, 'middle'),
+      last: await pixels(last!, 'last'),
+      end: await pixels(end, 'end'),
+      firstFraction: firstFraction,
+      diagnostics: diagnostics,
       middleFraction:
           (middleAt - startedAt).inMicroseconds / duration.inMicroseconds,
       lastFraction: lastFraction,
@@ -2475,6 +2492,74 @@ _timedFrames(
       image.dispose();
     }
   }
+}
+
+Map<String, Object?> _holeDiagnostics(
+  Uint8List pixels,
+  int side,
+  double holeRadius,
+) {
+  var maximum = 0;
+  var count = 0;
+  var maxX = 0;
+  var maxY = 0;
+  var minX = side;
+  var minY = side;
+  var right = -1;
+  var bottom = -1;
+  for (var y = 0; y < side; y++) {
+    for (var x = 0; x < side; x++) {
+      final radius = math.sqrt(
+        math.pow(x + .5 - side / 2, 2) + math.pow(y + .5 - side / 2, 2),
+      );
+      if (radius >= holeRadius) continue;
+      final alpha = pixels[(y * side + x) * 4 + 3];
+      if (alpha == 0) continue;
+      count++;
+      minX = math.min(minX, x);
+      minY = math.min(minY, y);
+      right = math.max(right, x);
+      bottom = math.max(bottom, y);
+      if (alpha > maximum) {
+        maximum = alpha;
+        maxX = x;
+        maxY = y;
+      }
+    }
+  }
+  List<int> rgba(int x, int y) {
+    final index = (y * side + x) * 4;
+    return pixels.sublist(index, index + 4);
+  }
+
+  return {
+    'maxAlpha': maximum,
+    'nonzeroCount': count,
+    'center': rgba(side ~/ 2, side ~/ 2),
+    if (count > 0) ...{
+      'xy': [maxX, maxY],
+      'rgba': rgba(maxX, maxY),
+      'radius': math.sqrt(
+        math.pow(maxX + .5 - side / 2, 2) + math.pow(maxY + .5 - side / 2, 2),
+      ),
+      'bounds': [minX, minY, right, bottom],
+      'neighbors': [
+        for (
+          var y = math.max(0, maxY - 1);
+          y <= math.min(side - 1, maxY + 1);
+          y++
+        )
+          [
+            for (
+              var x = math.max(0, maxX - 1);
+              x <= math.min(side - 1, maxX + 1);
+              x++
+            )
+              rgba(x, y),
+          ],
+      ],
+    },
+  };
 }
 
 void _expectPixelNear(
