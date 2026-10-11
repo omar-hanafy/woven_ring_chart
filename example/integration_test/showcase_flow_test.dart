@@ -2162,8 +2162,24 @@ class _RendererOpacityReference extends CustomPainter {
       ..addOval(Rect.fromCircle(center: center, radius: outer))
       ..addOval(Rect.fromCircle(center: center, radius: inner));
     if (directAlpha) {
-      canvas.drawRect(bounds, Paint()..color = surface);
-      canvas.drawPath(ring, Paint()..color = fill.withValues(alpha: .5));
+      // Resolve raw ink first and place the common surface behind it. Although
+      // surface-first srcOver is mathematically equivalent, an 8-bit target
+      // can round those operations differently. This independent primitive
+      // follows the translucent-owner contract without package geometry.
+      canvas.saveLayer(bounds, Paint());
+      canvas.drawPath(
+        ring,
+        Paint()
+          ..color = fill.withValues(alpha: .5)
+          ..blendMode = BlendMode.src,
+      );
+      canvas.drawPath(
+        ring,
+        Paint()
+          ..color = surface
+          ..blendMode = BlendMode.dstOver,
+      );
+      canvas.restore();
       return;
     }
     canvas.saveLayer(bounds, Paint());
@@ -2364,10 +2380,11 @@ _timedFrames(
   VoidCallback trigger,
 ) async {
   final images = <ui.Image>[];
+  // Resolve the live boundary before waiting: test finders are guarded and
+  // cannot be queried from a frame callback during pumpAndSettle.
+  final boundary = tester.renderObject<RenderRepaintBoundary>(capture);
   ui.Image snapshot() {
-    final image = tester
-        .renderObject<RenderRepaintBoundary>(capture)
-        .toImageSync(pixelRatio: 1);
+    final image = boundary.toImageSync(pixelRatio: 1);
     images.add(image);
     return image;
   }
@@ -2393,32 +2410,50 @@ _timedFrames(
       Duration(microseconds: math.max(0, remainingToMiddle)),
     );
     final middle = snapshot();
-    final remainingToTarget =
-        (duration.inMicroseconds * .85).round() -
-        (middleAt - startedAt).inMicroseconds;
-    var lastAt = await _pumpTimestamp(
-      tester,
-      Duration(microseconds: math.max(0, remainingToTarget)),
-    );
-    for (var step = 0; step < 200; step++) {
-      if ((lastAt - startedAt).inMicroseconds >=
-          duration.inMicroseconds * .97) {
-        break;
+    // Timer-driven pumps can jump across the final display interval. Observe
+    // every live frame instead, retaining a synchronous snapshot only when
+    // its real timestamp is within the required pre-completion window.
+    Duration? lastAt;
+    ui.Image? last;
+    var observing = true;
+    final binding = tester.binding as LiveTestWidgetsFlutterBinding;
+    void observeLastFrame(Duration timestamp) {
+      if (!observing) return;
+      final fraction =
+          (timestamp - startedAt).inMicroseconds / duration.inMicroseconds;
+      if (last == null && fraction >= .97 && fraction < 1) {
+        lastAt = timestamp;
+        last = snapshot();
       }
-      lastAt = await _pumpTimestamp(tester, const Duration(milliseconds: 1));
+      if (fraction < 1) {
+        binding.addPostFrameCallback(observeLastFrame);
+      }
     }
+
+    final framePolicy = binding.framePolicy;
+    try {
+      binding.addPostFrameCallback(observeLastFrame);
+      binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
+      await tester.pumpAndSettle();
+    } finally {
+      observing = false;
+      binding.framePolicy = framePolicy;
+    }
+    expect(
+      lastAt,
+      isNotNull,
+      reason: 'a genuine display frame within .97 <= fraction < 1 is required',
+    );
     final lastFraction =
-        (lastAt - startedAt).inMicroseconds / duration.inMicroseconds;
+        (lastAt! - startedAt).inMicroseconds / duration.inMicroseconds;
     expect(lastFraction, greaterThanOrEqualTo(.97));
     expect(lastFraction, lessThan(1));
-    final last = snapshot();
-    await tester.pumpAndSettle();
     final end = snapshot();
     final result = (
       immediate: await _imagePixels(immediate),
       first: await _imagePixels(first),
       middle: await _imagePixels(middle),
-      last: await _imagePixels(last),
+      last: await _imagePixels(last!),
       end: await _imagePixels(end),
       middleFraction:
           (middleAt - startedAt).inMicroseconds / duration.inMicroseconds,

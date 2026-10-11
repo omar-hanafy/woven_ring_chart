@@ -97,6 +97,17 @@ void main() {
   testWidgets('wide-gamut receiver opacity retains incoming shadow strength', (
     WidgetTester tester,
   ) async {
+    const WovenBorder border = WovenBorder(
+      color: Color.from(
+        alpha: 1,
+        red: 1,
+        green: 1,
+        blue: 1,
+        colorSpace: ui.ColorSpace.displayP3,
+      ),
+      widthFraction: .05,
+      opacity: .5,
+    );
     for (final bool clockwise in <bool>[true, false]) {
       final WovenRingStyle style = WovenRingStyle(
         startAngle: 0,
@@ -117,17 +128,7 @@ void main() {
               1,
               const Color(0xFFFFFFFF),
               opacity: i == 0 ? opacity : 1,
-              border: const WovenBorder(
-                color: Color.from(
-                  alpha: 1,
-                  red: 1,
-                  green: 1,
-                  blue: 1,
-                  colorSpace: ui.ColorSpace.displayP3,
-                ),
-                widthFraction: .05,
-                opacity: .5,
-              ),
+              border: border,
             ),
         ],
       );
@@ -142,7 +143,17 @@ void main() {
         0,
         clockwise: clockwise,
       );
-      final Path owner = g.segmentPath(
+      // Erode the constant-width receiver by its inside stroke width. This
+      // removes both circular and cap borders from the shadow-only oracle.
+      final double borderWidth = border.resolvedWidthFraction * g.thickness;
+      final WovenRingGeometry fillGeometry = WovenRingGeometry(
+        center: g.center,
+        outerRadius: g.outerRadius - borderWidth,
+        thickness: g.thickness - 2 * borderWidth,
+        trackRadius: g.trackRadius,
+        jointLag: g.jointLag,
+      );
+      final Path fillInterior = fillGeometry.segmentPath(
         extents[0].start,
         extents[0].end,
         clockwise: clockwise,
@@ -165,7 +176,8 @@ void main() {
                     point + Offset(dx, dy),
               ].every(
                 (Offset sample) =>
-                    owner.contains(sample) && !successor.contains(sample),
+                    fillInterior.contains(sample) &&
+                    !successor.contains(sample),
               )) {
             continue;
           }
@@ -174,8 +186,9 @@ void main() {
           // Fill and surface are equal white, so receiver opacity cannot
           // change the unchanged successor's incoming shadow. Its own cast
           // shadow belongs to a different receiver, outside these samples.
-          // The complete neighborhood lies inside the receiver, excluding
-          // cap-edge pixels that also see its own cast shadow through AA.
+          // The complete neighborhood lies inside the fill, excluding cap
+          // edges that see its own caster and stroke-edge AA whose separately
+          // quantized border composition can differ between the two renders.
           for (var channel = 0; channel < 4; channel++) {
             expect(
               faded[offset + channel],
